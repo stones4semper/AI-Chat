@@ -1,7 +1,7 @@
 import axios from 'axios';
 import type { OllamaResponse, OllamaModel } from '@/types';
 
-const API_BASE_URL = 'http://localhost:11434/api';
+const API_BASE_URL = '/api';
 
 export const ollamaService = {
   async getModels(): Promise<OllamaModel[]> {
