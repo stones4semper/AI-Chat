@@ -6,11 +6,12 @@ interface ChatContextType {
   currentChatId: string | null;
   currentChat: Chat | undefined;
   isLoading: boolean;
-  createNewChat: () => void;
+  createNewChat: (model?: string) => void;
   deleteChat: (id: string) => void;
   renameChat: (id: string, newTitle: string) => void;
   togglePinChat: (id: string) => void;
   selectChat: (id: string) => void;
+  changeModel: (chatId: string, model: string) => void;
   addMessage: (chatId: string, message: Message) => void;
   updateMessage: (chatId: string, messageId: string, content: string) => void;
   setLoading: (loading: boolean) => void;
@@ -68,12 +69,13 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
     localStorage.setItem('chats', JSON.stringify(chats));
   }, [chats]);
 
-  const createNewChat = useCallback(() => {
+  const createNewChat = useCallback((model: string = 'qwen:latest') => {
     const newChat: Chat = {
       id: Date.now().toString(),
       title: 'New Conversation',
       messages: [],
       pinned: false,
+      model: model,
       createdAt: new Date(),
       updatedAt: new Date()
     };
@@ -128,6 +130,19 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
     setCurrentChatId(id);
   }, []);
 
+  const changeModel = useCallback((chatId: string, model: string) => {
+    setChats(prev => prev.map(chat => {
+      if (chat.id === chatId) {
+        return {
+          ...chat,
+          model: model,
+          updatedAt: new Date()
+        };
+      }
+      return chat;
+    }));
+  }, []);
+
   const addMessage = useCallback((chatId: string, message: Message) => {
     setChats(prev => prev.map(chat => {
       if (chat.id === chatId) {
@@ -174,6 +189,7 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
     renameChat,
     togglePinChat,
     selectChat,
+    changeModel,
     addMessage,
     updateMessage,
     setLoading

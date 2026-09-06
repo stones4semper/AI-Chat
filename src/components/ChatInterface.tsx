@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, User, Bot, Copy, Check, RefreshCw, Pin, PinOff } from 'lucide-react';
+import { Send, User, Bot, Copy, Check, RefreshCw, Pin, PinOff, Cpu } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import type { Message } from '@/types';
 import { useChat } from '@/context/ChatContext';
@@ -69,14 +69,50 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     });
   };
 
+  // Get model display name
+  const getModelDisplayName = (modelName: string) => {
+    if (!modelName) return 'Qwen';
+    const name = modelName.toLowerCase();
+    if (name.includes('qwen')) return 'Qwen';
+    if (name.includes('llama')) return 'Llama';
+    if (name.includes('mistral')) return 'Mistral';
+    if (name.includes('gemma')) return 'Gemma';
+    if (name.includes('phi')) return 'Phi';
+    if (name.includes('neural')) return 'Neural';
+    return modelName.split(':')[0].charAt(0).toUpperCase() + 
+           modelName.split(':')[0].slice(1);
+  };
+
+  // Get model color
+  const getModelColor = (modelName: string) => {
+    if (!modelName) return 'text-blue-600 bg-blue-50 border-blue-200';
+    const name = modelName.toLowerCase();
+    if (name.includes('qwen')) return 'text-blue-600 bg-blue-50 border-blue-200';
+    if (name.includes('llama')) return 'text-purple-600 bg-purple-50 border-purple-200';
+    if (name.includes('mistral')) return 'text-orange-600 bg-orange-50 border-orange-200';
+    if (name.includes('gemma')) return 'text-green-600 bg-green-50 border-green-200';
+    if (name.includes('phi')) return 'text-indigo-600 bg-indigo-50 border-indigo-200';
+    return 'text-gray-600 bg-gray-50 border-gray-200';
+  };
+
   return (
     <div className="flex flex-col h-full bg-[#f5f5f0]">
       {/* Chat Header */}
       <div className="border-b border-[#006633]/10 bg-white/80 backdrop-blur-sm px-4 py-2 flex items-center justify-between">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
           <span className="text-sm font-medium text-[#006633]">
             {messages.length > 0 ? `${messages.length} messages` : 'New conversation'}
           </span>
+          {currentChat && currentChat.model && (
+            <div className={`
+              flex items-center gap-1.5 text-[10px] font-medium
+              px-2 py-0.5 rounded-full border
+              ${getModelColor(currentChat.model)}
+            `}>
+              <Cpu size={10} />
+              <span>{getModelDisplayName(currentChat.model)}</span>
+            </div>
+          )}
         </div>
         {currentChat && (
           <button
@@ -100,9 +136,15 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
               <h2 className="text-2xl font-bold text-[#006633] mb-2">
                 Nigeria Customs AI
               </h2>
-              <p className="text-[#006633]/70 max-w-md">
+              <p className="text-[#006633]/70 max-w-md mb-4">
                 Ask anything about customs, trade, or general inquiries. Justice & Honesty in every response.
               </p>
+              {currentChat && currentChat.model && (
+                <div className="flex items-center gap-2 text-xs text-[#006633]/50 bg-white px-3 py-1.5 rounded-full border border-[#006633]/10">
+                  <Cpu size={12} />
+                  <span>Using <strong>{getModelDisplayName(currentChat.model)}</strong></span>
+                </div>
+              )}
             </div>
           ) : (
             messages.map((message) => (
@@ -166,6 +208,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                           ? 'prose-invert'
                           : 'prose-gray'
                         }
+                        prose-pre:bg-gray-900 prose-pre:text-gray-100
+                        prose-code:bg-gray-100 prose-code:text-gray-800 prose-code:px-1 prose-code:py-0.5 prose-code:rounded
+                        prose-pre:code:bg-transparent prose-pre:code:text-inherit
                       `}
                     >
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>
@@ -185,6 +230,14 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                     >
                       {formatTime(message.timestamp)}
                     </div>
+
+                    {/* Model indicator on assistant messages */}
+                    {message.role === 'assistant' && currentChat?.model && (
+                      <div className="text-[8px] text-gray-400 mt-1 flex items-center gap-1">
+                        <Cpu size={8} />
+                        <span>{getModelDisplayName(currentChat.model)}</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -203,6 +256,12 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                   <div className="typing-dot" />
                   <div className="typing-dot" />
                 </div>
+                {currentChat?.model && (
+                  <div className="text-[8px] text-gray-400 mt-2 flex items-center gap-1 justify-center">
+                    <Cpu size={8} />
+                    <span>{getModelDisplayName(currentChat.model)} is thinking...</span>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -222,7 +281,11 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Type your message..."
+                placeholder={
+                  isLoading 
+                    ? `Waiting for ${currentChat?.model ? getModelDisplayName(currentChat.model) : 'AI'}...` 
+                    : "Type your message..."
+                }
                 disabled={isLoading}
                 className="w-full px-4 py-3 bg-[#f5f5f0] border border-[#006633]/20 rounded-xl focus:ring-2 focus:ring-[#006633]/20 focus:border-[#006633] transition-all duration-200 text-gray-900 placeholder-[#006633]/40"
               />
@@ -248,8 +311,16 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
               Send
             </button>
           </form>
-          <div className="mt-2 text-xs text-[#006633]/40 text-center">
-            Press Enter to send · Shift + Enter for new line
+          <div className="mt-2 flex items-center justify-between">
+            <span className="text-xs text-[#006633]/40">
+              Press Enter to send · Shift + Enter for new line
+            </span>
+            {currentChat?.model && (
+              <span className="text-[10px] text-[#006633]/30 flex items-center gap-1">
+                <Cpu size={10} />
+                {getModelDisplayName(currentChat.model)}
+              </span>
+            )}
           </div>
         </div>
       </div>

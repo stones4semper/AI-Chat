@@ -10,6 +10,7 @@ export interface Chat {
   title: string;
   messages: Message[];
   pinned: boolean;
+  model: string; // Add model to chat
   createdAt: Date;
   updatedAt: Date;
 }
@@ -28,4 +29,18 @@ export interface OllamaResponse {
   prompt_eval_duration?: number;
   eval_count?: number;
   eval_duration?: number;
+}
+
+export interface OllamaModel {
+  name: string;
+  modified_at: string;
+  size: number;
+  digest: string;
+  details: {
+    format: string;
+    family: string;
+    families: string[];
+    parameter_size: string;
+    quantization_level: string;
+  };
 }

@@ -6,6 +6,7 @@ export const useOllama = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState<boolean | null>(null);
+  const [currentModel, setCurrentModel] = useState('qwen:latest');
 
   const checkConnection = useCallback(async () => {
     try {
@@ -20,6 +21,7 @@ export const useOllama = () => {
 
   const sendMessage = useCallback(async (
     messages: Message[],
+    model: string = 'qwen:latest',
     onChunk?: (chunk: string) => void
   ): Promise<string> => {
     setIsLoading(true);
@@ -32,7 +34,7 @@ export const useOllama = () => {
         let fullResponse = '';
         await ollamaService.streamResponse(
           lastMessage.content,
-          'qwen:latest',
+          model,
           (chunk) => {
             fullResponse += chunk;
             onChunk(chunk);
@@ -43,7 +45,7 @@ export const useOllama = () => {
       } else {
         const response = await ollamaService.generateResponse(
           lastMessage.content,
-          'qwen:latest'
+          model
         );
         setIsLoading(false);
         return response;
@@ -60,7 +62,9 @@ export const useOllama = () => {
     isLoading,
     error,
     isConnected,
+    currentModel,
     checkConnection,
-    sendMessage
+    sendMessage,
+    setCurrentModel
   };
 };

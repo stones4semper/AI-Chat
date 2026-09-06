@@ -1,9 +1,19 @@
 import axios from 'axios';
-import type { OllamaResponse } from '@/types';
+import type { OllamaResponse, OllamaModel } from '@/types';
 
 const API_BASE_URL = 'http://localhost:11434/api';
 
 export const ollamaService = {
+  async getModels(): Promise<OllamaModel[]> {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/tags`);
+      return response.data.models || [];
+    } catch (error) {
+      console.error('Error fetching models:', error);
+      return [];
+    }
+  },
+
   async generateResponse(prompt: string, model: string = 'qwen:latest'): Promise<string> {
     try {
       const response = await axios.post<OllamaResponse>(
@@ -23,7 +33,7 @@ export const ollamaService = {
       return response.data.message.content;
     } catch (error) {
       console.error('Error calling Ollama:', error);
-      throw new Error('Failed to get response from Ollama. Make sure Ollama is running.');
+      throw new Error(`Failed to get response from ${model}. Make sure Ollama is running.`);
     }
   },
 
@@ -77,7 +87,7 @@ export const ollamaService = {
       }
     } catch (error) {
       console.error('Error streaming from Ollama:', error);
-      throw new Error('Failed to stream response from Ollama.');
+      throw new Error(`Failed to stream response from ${model}.`);
     }
   },
 

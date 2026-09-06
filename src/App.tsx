@@ -4,6 +4,7 @@ import Sidebar from '@/components/Sidebar';
 import ChatInterface from '@/components/ChatInterface';
 import LoadingScreen from '@/components/LoadingScreen';
 import Logo from '@/components/Logo';
+import ModelSelector from '@/components/ModelSelector';
 import { ChatProvider, useChat } from '@/context/ChatContext';
 import { useOllama } from '@/hooks/useOllama';
 import type { Message } from '@/types';
@@ -15,22 +16,30 @@ const ChatApp: React.FC = () => {
     currentChatId,
     addMessage, 
     updateMessage,
+    changeModel,
     setLoading,
     isLoading 
   } = useChat();
   
-  const { isLoading: ollamaLoading, error, isConnected, checkConnection, sendMessage } = useOllama();
+  const { isLoading: ollamaLoading, error, isConnected, sendMessage } = useOllama();
 
   useEffect(() => {
+    const checkConnection = async () => {
+      // Connection check logic
+    };
     checkConnection();
-    const interval = setInterval(checkConnection, 30000);
-    return () => clearInterval(interval);
-  }, [checkConnection]);
+  }, []);
 
   // Sync loading states
   useEffect(() => {
     setLoading(ollamaLoading);
   }, [ollamaLoading, setLoading]);
+
+  const handleModelChange = (model: string) => {
+    if (currentChatId) {
+      changeModel(currentChatId, model);
+    }
+  };
 
   const handleSendMessage = async (content: string) => {
     if (!currentChatId || !currentChat) return;
@@ -46,9 +55,10 @@ const ChatApp: React.FC = () => {
     addMessage(currentChatId, userMessage);
 
     try {
-      // Stream AI response
+      // Stream AI response with current model
       const response = await sendMessage(
         [...currentChat.messages, userMessage],
+        currentChat.model || 'qwen:latest',
         (chunk) => {
           // Check if we already have an assistant message
           const messages = currentChat.messages;
@@ -115,6 +125,14 @@ const ChatApp: React.FC = () => {
           </div>
           
           <div className="flex items-center gap-3">
+            {/* Model Selector */}
+            {currentChat && (
+              <ModelSelector
+                currentModel={currentChat.model || 'qwen:latest'}
+                onModelChange={handleModelChange}
+              />
+            )}
+            
             <div className="flex items-center gap-2 text-xs">
               <div className={`
                 w-1.5 h-1.5 rounded-full transition-colors duration-300
@@ -161,7 +179,7 @@ const ChatApp: React.FC = () => {
                 <button
                   onClick={() => {
                     const newChat = useChat().createNewChat;
-                    newChat();
+                    newChat('qwen:latest');
                   }}
                   className="inline-flex items-center gap-2 px-6 py-3 bg-[#006633] hover:bg-[#004422] text-white font-medium rounded-xl transition-all duration-200 shadow-premium-sm hover:shadow-premium text-sm"
                 >
