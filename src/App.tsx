@@ -18,7 +18,9 @@ const ChatApp: React.FC = () => {
     updateMessage,
     changeModel,
     setLoading,
-    isLoading 
+    isLoading,
+    deleteMessage,
+    getMessages
   } = useChat();
   
   const { isLoading: ollamaLoading, error, isConnected, sendMessage } = useOllama();
@@ -41,8 +43,30 @@ const ChatApp: React.FC = () => {
     }
   };
 
-  const handleSendMessage = async (content: string) => {
+  const handleSendMessage = async (content: string, editMessageId?: string) => {
     if (!currentChatId || !currentChat) return;
+
+    // If editing, find the message and its position
+    let messageIndex = -1;
+    let existingMessages = [...currentChat.messages];
+    
+    if (editMessageId) {
+      messageIndex = existingMessages.findIndex(m => m.id === editMessageId);
+      if (messageIndex === -1) return;
+      
+      // Remove all messages after the edited message (including the AI response)
+      const newMessages = existingMessages.slice(0, messageIndex + 1);
+      // Update the user message content
+      newMessages[messageIndex] = {
+        ...newMessages[messageIndex],
+        content: content,
+        edited: true,
+        timestamp: new Date()
+      };
+      
+      // Update chat with truncated messages
+      // We'll handle this through the context
+    }
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -60,15 +84,12 @@ const ChatApp: React.FC = () => {
         [...currentChat.messages, userMessage],
         currentChat.model || 'qwen:latest',
         (chunk) => {
-          // Check if we already have an assistant message
           const messages = currentChat.messages;
           const lastMessage = messages[messages.length - 1];
           
           if (lastMessage && lastMessage.role === 'assistant') {
-            // Update existing assistant message
             updateMessage(currentChatId, lastMessage.id, lastMessage.content + chunk);
           } else {
-            // Create new assistant message
             const assistantMessage: Message = {
               id: (Date.now() + 1).toString(),
               role: 'assistant',
@@ -96,6 +117,64 @@ const ChatApp: React.FC = () => {
       }
     } catch (error) {
       console.error('Error sending message:', error);
+    }
+  };
+
+  const handleRegenerateMessage = async (messageId: string) => {
+    if (!currentChatId || !currentChat) return;
+
+    // Find the assistant message
+    const assistantIndex = currentChat.messages.findIndex(m => m.id === messageId);
+    if (assistantIndex === -1) return;
+
+    // Find the previous user message
+    const userMessage = currentChat.messages[assistantIndex - 1];
+    if (!userMessage || userMessage.role !== 'user') return;
+
+    // Remove the assistant message and any messages after it
+    const newMessages = currentChat.messages.slice(0, assistantIndex);
+    
+    // Update chat with truncated messages
+    // We'll handle this through the context
+
+    // Regenerate
+    try {
+      const response = await sendMessage(
+        [...newMessages, userMessage],
+        currentChat.model || 'qwen:latest',
+        (chunk) => {
+          const messages = currentChat.messages;
+          const lastMessage = messages[messages.length - 1];
+          
+          if (lastMessage && lastMessage.role === 'assistant') {
+            updateMessage(currentChatId, lastMessage.id, lastMessage.content + chunk);
+          } else {
+            const assistantMessage: Message = {
+              id: (Date.now() + 1).toString(),
+              role: 'assistant',
+              content: chunk,
+              timestamp: new Date()
+            };
+            addMessage(currentChatId, assistantMessage);
+          }
+        }
+      );
+
+      if (response) {
+        const messages = currentChat.messages;
+        const lastMessage = messages[messages.length - 1];
+        if (lastMessage?.role !== 'assistant') {
+          const assistantMessage: Message = {
+            id: (Date.now() + 1).toString(),
+            role: 'assistant',
+            content: response,
+            timestamp: new Date()
+          };
+          addMessage(currentChatId, assistantMessage);
+        }
+      }
+    } catch (error) {
+      console.error('Error regenerating message:', error);
     }
   };
 
@@ -161,6 +240,7 @@ const ChatApp: React.FC = () => {
             <ChatInterface
               messages={currentChat.messages}
               onSendMessage={handleSendMessage}
+              onRegenerateMessage={handleRegenerateMessage}
               isLoading={isLoading}
               chatId={currentChatId}
             />

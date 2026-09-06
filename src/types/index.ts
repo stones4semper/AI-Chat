@@ -3,6 +3,8 @@ export interface Message {
   role: 'user' | 'assistant';
   content: string;
   timestamp: Date;
+  edited?: boolean; // Track if message was edited
+  versions?: string[]; // For version history (optional)
 }
 
 export interface Chat {
@@ -10,7 +12,7 @@ export interface Chat {
   title: string;
   messages: Message[];
   pinned: boolean;
-  model: string; // Add model to chat
+  model: string;
   createdAt: Date;
   updatedAt: Date;
 }

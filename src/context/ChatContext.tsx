@@ -14,7 +14,13 @@ interface ChatContextType {
   changeModel: (chatId: string, model: string) => void;
   addMessage: (chatId: string, message: Message) => void;
   updateMessage: (chatId: string, messageId: string, content: string) => void;
+  deleteMessage: (chatId: string, messageId: string) => void;
+  getMessages: (chatId: string) => Message[];
+  truncateMessages: (chatId: string, index: number) => void;
   setLoading: (loading: boolean) => void;
+  clearAllChats: () => void;
+  exportChats: () => string;
+  importChats: (data: string) => void;
 }
 
 const ChatContext = createContext<ChatContextType | undefined>(undefined);
@@ -69,6 +75,7 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
     localStorage.setItem('chats', JSON.stringify(chats));
   }, [chats]);
 
+  // Create a new chat
   const createNewChat = useCallback((model: string = 'qwen:latest') => {
     const newChat: Chat = {
       id: Date.now().toString(),
@@ -83,6 +90,7 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
     setCurrentChatId(newChat.id);
   }, []);
 
+  // Delete a chat
   const deleteChat = useCallback((id: string) => {
     setChats(prev => prev.filter(chat => chat.id !== id));
     if (currentChatId === id) {
@@ -91,6 +99,7 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
     }
   }, [currentChatId, chats]);
 
+  // Rename a chat
   const renameChat = useCallback((id: string, newTitle: string) => {
     setChats(prev => prev.map(chat => {
       if (chat.id === id) {
@@ -104,6 +113,7 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
     }));
   }, []);
 
+  // Toggle pin status
   const togglePinChat = useCallback((id: string) => {
     setChats(prev => {
       const updatedChats = prev.map(chat => {
@@ -126,10 +136,12 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
     });
   }, []);
 
+  // Select a chat
   const selectChat = useCallback((id: string) => {
     setCurrentChatId(id);
   }, []);
 
+  // Change model for a chat
   const changeModel = useCallback((chatId: string, model: string) => {
     setChats(prev => prev.map(chat => {
       if (chat.id === chatId) {
@@ -143,12 +155,19 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
     }));
   }, []);
 
+  // Add a message to a chat
   const addMessage = useCallback((chatId: string, message: Message) => {
     setChats(prev => prev.map(chat => {
       if (chat.id === chatId) {
+        // Auto-generate title from first user message
+        let newTitle = chat.title;
+        if (chat.messages.length === 0 && message.role === 'user') {
+          newTitle = message.content.slice(0, 30) + (message.content.length > 30 ? '...' : '');
+        }
         return {
           ...chat,
           messages: [...chat.messages, message],
+          title: newTitle,
           updatedAt: new Date()
         };
       }
@@ -156,6 +175,7 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
     }));
   }, []);
 
+  // Update a message in a chat
   const updateMessage = useCallback((chatId: string, messageId: string, content: string) => {
     setChats(prev => prev.map(chat => {
       if (chat.id === chatId) {
@@ -175,8 +195,81 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
     }));
   }, []);
 
+  // Delete a message from a chat
+  const deleteMessage = useCallback((chatId: string, messageId: string) => {
+    setChats(prev => prev.map(chat => {
+      if (chat.id === chatId) {
+        return {
+          ...chat,
+          messages: chat.messages.filter(m => m.id !== messageId),
+          updatedAt: new Date()
+        };
+      }
+      return chat;
+    }));
+  }, []);
+
+  // Get messages from a chat
+  const getMessages = useCallback((chatId: string) => {
+    const chat = chats.find(c => c.id === chatId);
+    return chat ? chat.messages : [];
+  }, [chats]);
+
+  // Truncate messages after a certain index (for regeneration/editing)
+  const truncateMessages = useCallback((chatId: string, index: number) => {
+    setChats(prev => prev.map(chat => {
+      if (chat.id === chatId) {
+        return {
+          ...chat,
+          messages: chat.messages.slice(0, index),
+          updatedAt: new Date()
+        };
+      }
+      return chat;
+    }));
+  }, []);
+
+  // Set loading state
   const setLoading = useCallback((loading: boolean) => {
     setIsLoading(loading);
+  }, []);
+
+  // Clear all chats
+  const clearAllChats = useCallback(() => {
+    if (window.confirm('Are you sure you want to delete all chats? This action cannot be undone.')) {
+      setChats([]);
+      setCurrentChatId(null);
+    }
+  }, []);
+
+  // Export chats as JSON
+  const exportChats = useCallback(() => {
+    return JSON.stringify(chats, null, 2);
+  }, [chats]);
+
+  // Import chats from JSON
+  const importChats = useCallback((data: string) => {
+    try {
+      const parsed = JSON.parse(data);
+      if (Array.isArray(parsed)) {
+        const importedChats = parsed.map((chat: any) => ({
+          ...chat,
+          createdAt: new Date(chat.createdAt),
+          updatedAt: new Date(chat.updatedAt),
+          messages: chat.messages.map((msg: any) => ({
+            ...msg,
+            timestamp: new Date(msg.timestamp)
+          }))
+        }));
+        setChats(prev => [...importedChats, ...prev]);
+        if (importedChats.length > 0) {
+          setCurrentChatId(importedChats[0].id);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to import chats:', error);
+      alert('Failed to import chats. Please check the file format.');
+    }
   }, []);
 
   const value = {
@@ -192,7 +285,13 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
     changeModel,
     addMessage,
     updateMessage,
-    setLoading
+    deleteMessage,
+    getMessages,
+    truncateMessages,
+    setLoading,
+    clearAllChats,
+    exportChats,
+    importChats
   };
 
   return (
