@@ -224,7 +224,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isMobileOpen, setIsMobileOpen }) => {
         {/* New Chat Button */}
         <div className="p-3">
           <button
-            onClick={createNewChat}
+            onClick={() => createNewChat()}
             className="w-full py-2.5 px-4 bg-[#006633] hover:bg-[#004422] text-white font-medium rounded-xl flex items-center justify-center gap-2 text-sm transition-all duration-200 shadow-premium-sm hover:shadow-premium"
           >
             <Plus size={16} />
