@@ -24,7 +24,6 @@ const ChatApp: React.FC = () => {
     changeModel,
     setLoading,
     isLoading,
-    getMessages,
     truncateMessages,
     createNewChat
   } = useChat();
@@ -36,6 +35,7 @@ const ChatApp: React.FC = () => {
     availableModels,
     checkConnection,
     sendMessage,
+    stopGeneration,
     refreshModels
   } = useOllama();
 
@@ -67,9 +67,12 @@ const ChatApp: React.FC = () => {
   useEffect(() => {
     if (isInitialized && chats.length === 0 && isConnected) {
       console.log('📝 Creating first chat...');
-      createNewChat('qwen:latest');
+      const defaultModel = availableModels.length > 0
+        ? (availableModels.includes('qwen:latest') ? 'qwen:latest' : availableModels[0])
+        : 'qwen:latest';
+      createNewChat(defaultModel);
     }
-  }, [isInitialized, chats.length, isConnected, createNewChat]);
+  }, [isInitialized, chats.length, isConnected, availableModels, createNewChat]);
 
   const handleModelChange = useCallback((model: string) => {
     if (currentChatId) {
@@ -77,6 +80,11 @@ const ChatApp: React.FC = () => {
       changeModel(currentChatId, model);
     }
   }, [currentChatId, changeModel]);
+
+  const handleStopGeneration = useCallback(() => {
+    console.log('🛑 Stop generation requested');
+    stopGeneration();
+  }, [stopGeneration]);
 
   const handleSendMessage = useCallback(async (
     content: string, 
@@ -102,7 +110,11 @@ const ChatApp: React.FC = () => {
     console.log(`📤 Sending message: "${content.slice(0, 50)}..."`);
     isProcessing.current = true;
 
+    const assistantMessageId = `assistant_${Date.now()}`;
+
     try {
+      let messagesToSend: Message[] = [];
+
       // Handle edit mode
       if (editMessageId) {
         const messageIndex = currentChat.messages.findIndex(m => m.id === editMessageId);
@@ -111,10 +123,8 @@ const ChatApp: React.FC = () => {
           return;
         }
         
-        // Truncate messages after the edited message
         truncateMessages(currentChatId, messageIndex);
         
-        // Update the user message
         const updatedUserMessage: Message = {
           ...currentChat.messages[messageIndex],
           content: content,
@@ -122,8 +132,12 @@ const ChatApp: React.FC = () => {
           timestamp: new Date()
         };
         addMessage(currentChatId, updatedUserMessage);
+
+        messagesToSend = [
+          ...currentChat.messages.slice(0, messageIndex),
+          updatedUserMessage
+        ];
       } else {
-        // Regular new message with optional reply
         const userMessage: Message = {
           id: `user_${Date.now()}`,
           role: 'user',
@@ -132,23 +146,12 @@ const ChatApp: React.FC = () => {
           replyToId: replyToId || undefined
         };
         addMessage(currentChatId, userMessage);
+
+        messagesToSend = [...currentChat.messages, userMessage];
       }
 
-      // Get current messages after adding user message
-      const currentMessages = getMessages(currentChatId);
+      const model = currentChat.model || (availableModels.length > 0 ? availableModels[0] : 'qwen:latest');
       
-      // Find the last user message
-      const lastUserMessage = currentMessages.filter(m => m.role === 'user').pop();
-      if (!lastUserMessage) {
-        console.error('❌ No user message found to send');
-        isProcessing.current = false;
-        return;
-      }
-
-      const model = currentChat.model || 'qwen:latest';
-      
-      // Create a placeholder for the assistant message
-      const assistantMessageId = `assistant_${Date.now()}`;
       const assistantMessage: Message = {
         id: assistantMessageId,
         role: 'assistant',
@@ -156,53 +159,37 @@ const ChatApp: React.FC = () => {
         timestamp: new Date()
       };
       
-      // Add empty assistant message first
       addMessage(currentChatId, assistantMessage);
 
       console.log(`🤖 Generating response with model: ${model}`);
-      console.log(`📝 Sending message content: "${lastUserMessage.content}"`);
       
       let fullResponse = '';
 
-      // Send the message and get streaming response
       await sendMessage(
-        currentMessages,
+        messagesToSend,
         model,
         (chunk) => {
-          // This is the streaming callback
           fullResponse += chunk;
-          
-          // Update the assistant message with the accumulated content
           updateMessage(currentChatId, assistantMessageId, fullResponse);
         }
       );
       
       console.log('✅ Message sent successfully');
-      console.log(`📝 Full response length: ${fullResponse.length} characters`);
       
     } catch (error) {
-      console.error('❌ Error sending message:', error);
-      const errorMsg = error instanceof Error ? error.message : 'Failed to get response';
-      
-      // Find the last assistant message and update with error
-      const messages = getMessages(currentChatId);
-      const lastMessage = messages[messages.length - 1];
-      if (lastMessage && lastMessage.role === 'assistant' && lastMessage.content === '') {
-        updateMessage(currentChatId, lastMessage.id, `❌ Error: ${errorMsg}`);
+      // Check if it was stopped by user
+      if (error instanceof Error && error.message === 'Generation stopped by user') {
+        console.log('🛑 Generation stopped by user');
+        updateMessage(currentChatId, assistantMessageId, '⏹️ Generation stopped by user');
       } else {
-        // Add error message
-        const errorMessage: Message = {
-          id: `error_${Date.now()}`,
-          role: 'assistant',
-          content: `❌ Error: ${errorMsg}`,
-          timestamp: new Date()
-        };
-        addMessage(currentChatId, errorMessage);
+        console.error('❌ Error sending message:', error);
+        const errorMsg = error instanceof Error ? error.message : 'Failed to get response';
+        updateMessage(currentChatId, assistantMessageId, `❌ Error: ${errorMsg}`);
       }
     } finally {
       isProcessing.current = false;
     }
-  }, [currentChatId, currentChat, addMessage, updateMessage, getMessages, sendMessage, truncateMessages]);
+  }, [currentChatId, currentChat, addMessage, updateMessage, sendMessage, truncateMessages, availableModels]);
 
   const handleRegenerateMessage = useCallback(async (messageId: string) => {
     if (isProcessing.current) {
@@ -218,15 +205,15 @@ const ChatApp: React.FC = () => {
     console.log(`🔄 Regenerating message: ${messageId}`);
     isProcessing.current = true;
 
+    const newAssistantId = `assistant_${Date.now()}`;
+
     try {
-      // Find the assistant message
       const assistantIndex = currentChat.messages.findIndex(m => m.id === messageId);
       if (assistantIndex === -1) {
         isProcessing.current = false;
         return;
       }
 
-      // Find the previous user message
       const userMessage = currentChat.messages[assistantIndex - 1];
       if (!userMessage || userMessage.role !== 'user') {
         console.error('❌ No user message found before assistant message');
@@ -234,11 +221,8 @@ const ChatApp: React.FC = () => {
         return;
       }
 
-      // Remove the assistant message and any messages after it
       truncateMessages(currentChatId, assistantIndex);
 
-      // Create new assistant message placeholder
-      const newAssistantId = `assistant_${Date.now()}`;
       const newAssistant: Message = {
         id: newAssistantId,
         role: 'assistant',
@@ -247,14 +231,17 @@ const ChatApp: React.FC = () => {
       };
       addMessage(currentChatId, newAssistant);
 
-      const currentMessages = getMessages(currentChatId);
-      const model = currentChat.model || 'qwen:latest';
+      const messagesToSend = [
+        ...currentChat.messages.slice(0, assistantIndex)
+      ];
+
+      const model = currentChat.model || (availableModels.length > 0 ? availableModels[0] : 'qwen:latest');
       console.log(`🤖 Regenerating response with model: ${model}`);
       
       let fullResponse = '';
 
       await sendMessage(
-        currentMessages,
+        messagesToSend,
         model,
         (chunk) => {
           fullResponse += chunk;
@@ -264,27 +251,26 @@ const ChatApp: React.FC = () => {
       
       console.log('✅ Message regenerated successfully');
     } catch (error) {
-      console.error('❌ Error regenerating message:', error);
-      const errorMsg = error instanceof Error ? error.message : 'Failed to regenerate';
-      
-      // Add error message
-      const errorMessage: Message = {
-        id: `error_${Date.now()}`,
-        role: 'assistant',
-        content: `❌ Error: ${errorMsg}`,
-        timestamp: new Date()
-      };
-      addMessage(currentChatId, errorMessage);
+      if (error instanceof Error && error.message === 'Generation stopped by user') {
+        console.log('🛑 Regeneration stopped by user');
+      } else {
+        console.error('❌ Error regenerating message:', error);
+        const errorMsg = error instanceof Error ? error.message : 'Failed to regenerate';
+        updateMessage(currentChatId, newAssistantId, `❌ Error: ${errorMsg}`);
+      }
     } finally {
       isProcessing.current = false;
     }
-  }, [currentChatId, currentChat, addMessage, updateMessage, getMessages, sendMessage, truncateMessages]);
+  }, [currentChatId, currentChat, addMessage, updateMessage, sendMessage, truncateMessages, availableModels]);
 
   const handleCreateNewChat = useCallback(() => {
     console.log('📝 Creating new chat...');
-    createNewChat('qwen:latest');
+    const defaultModel = availableModels.length > 0
+      ? (availableModels.includes('qwen:latest') ? 'qwen:latest' : availableModels[0])
+      : 'qwen:latest';
+    createNewChat(defaultModel);
     setIsMobileOpen(false);
-  }, [createNewChat]);
+  }, [availableModels, createNewChat]);
 
   // Loading state
   if (!isInitialized) {
@@ -320,7 +306,6 @@ const ChatApp: React.FC = () => {
           </div>
           
           <div className="flex items-center gap-3 flex-shrink-0">
-            {/* Model Selector */}
             {currentChat && (
               <ModelSelector
                 currentModel={currentChat.model || 'qwen:latest'}
@@ -328,16 +313,22 @@ const ChatApp: React.FC = () => {
               />
             )}
             
-            {/* Connection Status */}
-            <ConnectionStatus showDetails={true} />
+            <ConnectionStatus 
+              showDetails={true} 
+              isConnected={isConnected}
+              availableModels={availableModels}
+              error={error}
+              onRefresh={async () => {
+                await checkConnection();
+                await refreshModels();
+              }}
+            />
             
-            {/* NCS Icons */}
             <div className="hidden sm:flex items-center gap-1.5 text-[#006633]/40">
               <Scale size={12} />
               <Shield size={12} />
             </div>
             
-            {/* Error Display */}
             {error && (
               <div className="hidden md:flex items-center gap-1.5 text-xs text-amber-600 bg-amber-50 px-2.5 py-1 rounded-full max-w-[200px]">
                 <AlertCircle size={12} className="flex-shrink-0" />
@@ -354,6 +345,7 @@ const ChatApp: React.FC = () => {
               messages={currentChat.messages}
               onSendMessage={handleSendMessage}
               onRegenerateMessage={handleRegenerateMessage}
+              onStopGeneration={handleStopGeneration}
               isLoading={isProcessing.current || isLoading}
               chatId={currentChatId}
             />

@@ -6,13 +6,27 @@ import { ollamaService } from '@/services/ollama';
 interface ConnectionStatusProps {
   showDetails?: boolean;
   className?: string;
+  isConnected?: boolean | null;
+  availableModels?: string[];
+  error?: string | null;
+  onRefresh?: () => Promise<void>;
 }
 
 const ConnectionStatus: React.FC<ConnectionStatusProps> = ({ 
   showDetails = true,
-  className = ''
+  className = '',
+  isConnected: isConnectedProp,
+  availableModels: availableModelsProp,
+  error: errorProp,
+  onRefresh: onRefreshProp
 }) => {
-  const { isConnected, error, availableModels, checkConnection, refreshModels } = useOllama();
+  const hookData = useOllama();
+  const isConnected = isConnectedProp !== undefined ? isConnectedProp : hookData.isConnected;
+  const error = errorProp !== undefined ? errorProp : hookData.error;
+  const availableModels = availableModelsProp !== undefined ? availableModelsProp : hookData.availableModels;
+  const checkConnection = hookData.checkConnection;
+  const refreshModels = hookData.refreshModels;
+
   const [isChecking, setIsChecking] = useState(false);
   const [isPulling, setIsPulling] = useState(false);
   const [lastChecked, setLastChecked] = useState<Date | null>(null);
@@ -20,18 +34,23 @@ const ConnectionStatus: React.FC<ConnectionStatusProps> = ({
 
   const handleCheckConnection = async () => {
     setIsChecking(true);
-    await checkConnection();
-    await refreshModels();
+    if (onRefreshProp) {
+      await onRefreshProp();
+    } else {
+      await checkConnection();
+      await refreshModels();
+    }
     setLastChecked(new Date());
     setIsChecking(false);
   };
 
   useEffect(() => {
-    handleCheckConnection();
-    // Check every 30 seconds
-    const interval = setInterval(handleCheckConnection, 30000);
-    return () => clearInterval(interval);
-  }, []);
+    if (!onRefreshProp) {
+      handleCheckConnection();
+      const interval = setInterval(handleCheckConnection, 30000);
+      return () => clearInterval(interval);
+    }
+  }, [onRefreshProp]);
 
   const handlePullModel = async () => {
     if (isPulling) return;

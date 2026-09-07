@@ -4,7 +4,7 @@ export interface Message {
   content: string;
   timestamp: Date;
   edited?: boolean;
-  replyToId?: string; // ID of the message being replied to
+  replyToId?: string;
 }
 
 export interface Chat {

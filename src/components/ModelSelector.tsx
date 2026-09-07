@@ -79,8 +79,6 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const currentModelInfo = models.find(m => m.name === currentModel);
-
   return (
     <div className={`relative ${className}`} ref={dropdownRef}>
       <button
@@ -160,12 +158,12 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
                         )}
                       </div>
                       <div className="flex items-center gap-2 text-[10px] text-gray-400">
-                        <span>{model.details.parameter_size}</span>
+                        <span>{model.details?.parameter_size || 'Unknown size'}</span>
                         <span>·</span>
-                        <span>{model.details.quantization_level || 'Default'}</span>
+                        <span>{model.details?.quantization_level || 'Default'}</span>
                       </div>
                     </div>
-                    {model.details.family && (
+                    {model.details?.family && (
                       <span className="text-[8px] font-medium text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded-full">
                         {model.details.family}
                       </span>

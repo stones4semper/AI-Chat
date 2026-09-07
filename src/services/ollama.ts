@@ -1,7 +1,7 @@
 import axios from 'axios';
 import type { OllamaResponse, OllamaModel } from '@/types';
 
-const API_BASE_URL = 'http://localhost:11434/api';
+const API_BASE_URL = typeof window !== 'undefined' ? '/api' : 'http://127.0.0.1:11434/api';
 
 export const ollamaService = {
   async getModels(): Promise<OllamaModel[]> {
@@ -16,18 +16,20 @@ export const ollamaService = {
     }
   },
 
-  async generateResponse(prompt: string, model: string = 'qwen:latest'): Promise<string> {
+  async generateResponse(
+    promptOrMessages: string | Array<{ role: string; content: string }>, 
+    model: string = 'qwen:latest'
+  ): Promise<string> {
     try {
+      const messages = typeof promptOrMessages === 'string'
+        ? [{ role: 'user', content: promptOrMessages }]
+        : promptOrMessages;
+
       const response = await axios.post<OllamaResponse>(
         `${API_BASE_URL}/chat`,
         {
           model: model,
-          messages: [
-            {
-              role: 'user',
-              content: prompt
-            }
-          ],
+          messages: messages,
           stream: false
         },
         {
@@ -51,11 +53,16 @@ export const ollamaService = {
   },
 
   async streamResponse(
-    prompt: string, 
+    promptOrMessages: string | Array<{ role: string; content: string }>, 
     model: string = 'qwen:latest',
-    onChunk: (chunk: string) => void
+    onChunk: (chunk: string) => void,
+    signal?: AbortSignal
   ): Promise<void> {
     try {
+      const messages = typeof promptOrMessages === 'string'
+        ? [{ role: 'user', content: promptOrMessages }]
+        : promptOrMessages;
+
       const response = await fetch(`${API_BASE_URL}/chat`, {
         method: 'POST',
         headers: {
@@ -63,14 +70,10 @@ export const ollamaService = {
         },
         body: JSON.stringify({
           model: model,
-          messages: [
-            {
-              role: 'user',
-              content: prompt
-            }
-          ],
+          messages: messages,
           stream: true
-        })
+        }),
+        signal: signal // Add abort signal
       });
 
       if (!response.ok) {
@@ -90,6 +93,13 @@ export const ollamaService = {
       let buffer = '';
 
       while (true) {
+        // Check if aborted
+        if (signal?.aborted) {
+          console.log('🛑 Stream aborted by user');
+          await reader.cancel();
+          break;
+        }
+
         const { done, value } = await reader.read();
         if (done) break;
 
@@ -113,6 +123,10 @@ export const ollamaService = {
         }
       }
     } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        console.log('🛑 Fetch aborted by user');
+        return;
+      }
       console.error('Error streaming from Ollama:', error);
       throw error;
     }
@@ -120,7 +134,7 @@ export const ollamaService = {
 
   async checkConnection(): Promise<boolean> {
     try {
-      const response = await axios.get(`${API_BASE_URL}/tags`, {
+      await axios.get(`${API_BASE_URL}/tags`, {
         timeout: 3000
       });
       return true;
@@ -130,7 +144,6 @@ export const ollamaService = {
     }
   },
 
-  // NEW: Pull a model from Ollama
   async pullModel(model: string = 'qwen:latest'): Promise<void> {
     try {
       console.log(`📥 Pulling model: ${model}...`);
@@ -170,7 +183,6 @@ export const ollamaService = {
           try {
             const data = JSON.parse(line);
             if (data.status) {
-              // Only log if status changed
               if (data.status !== lastStatus) {
                 console.log(`📦 ${data.status}${data.progress ? `: ${data.progress}` : ''}`);
                 lastStatus = data.status;

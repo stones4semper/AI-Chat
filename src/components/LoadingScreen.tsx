@@ -29,8 +29,8 @@ const LoadingScreen: React.FC<LoadingScreenProps> = ({
       return;
     }
 
-    let interval: NodeJS.Timeout;
-    let textInterval: NodeJS.Timeout;
+    let interval: ReturnType<typeof setInterval>;
+    let textInterval: ReturnType<typeof setInterval>;
     let currentProgress = 0;
 
     interval = setInterval(() => {

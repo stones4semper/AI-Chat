@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { 
-  Plus, MessageSquare, Trash2, Menu, X, Shield, Scale, 
-  Pin, PinOff, Pencil, Check, X as XIcon, Star 
+  Plus, Trash2, Menu, X, Shield, Scale, 
+  Pin, PinOff, Pencil, Check, X as XIcon 
 } from 'lucide-react';
 import Logo from '@/components/Logo';
 import { useChat } from '@/context/ChatContext';

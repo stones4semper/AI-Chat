@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { ollamaService } from '@/services/ollama';
 import type { Message } from '@/types';
 
@@ -7,6 +7,7 @@ export const useOllama = () => {
   const [error, setError] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState<boolean | null>(null);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const checkConnection = useCallback(async () => {
     try {
@@ -34,9 +35,23 @@ export const useOllama = () => {
     }
   }, []);
 
+  // Cleanup abort controller on unmount
   useEffect(() => {
-    checkConnection();
-  }, [checkConnection]);
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, []);
+
+  const stopGeneration = useCallback(() => {
+    if (abortControllerRef.current) {
+      console.log('🛑 Stopping generation...');
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+      setIsLoading(false);
+    }
+  }, []);
 
   const sendMessage = useCallback(async (
     messages: Message[],
@@ -46,8 +61,10 @@ export const useOllama = () => {
     setIsLoading(true);
     setError(null);
 
+    // Create new abort controller
+    abortControllerRef.current = new AbortController();
+
     try {
-      // Find the last user message
       const userMessages = messages.filter(m => m.role === 'user');
       const lastUserMessage = userMessages[userMessages.length - 1];
       
@@ -63,30 +80,42 @@ export const useOllama = () => {
 
       console.log(`Sending to ${model}: "${prompt.slice(0, 50)}..."`);
 
+      const messagesPayload = messages.map(m => ({
+        role: m.role,
+        content: m.content
+      }));
+
       let fullResponse = '';
 
       if (onChunk) {
-        // Streaming mode
         await ollamaService.streamResponse(
-          prompt,
+          messagesPayload,
           model,
           (chunk) => {
             fullResponse += chunk;
             onChunk(chunk);
-          }
+          },
+          abortControllerRef.current.signal
         );
       } else {
-        // Non-streaming mode
-        fullResponse = await ollamaService.generateResponse(prompt, model);
+        fullResponse = await ollamaService.generateResponse(messagesPayload, model);
       }
       
       setIsLoading(false);
+      abortControllerRef.current = null;
       return fullResponse;
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'An error occurred';
-      console.error('Error in sendMessage:', errorMessage);
-      setError(errorMessage);
+      // Check if it was aborted
+      if (err instanceof Error && err.name === 'AbortError') {
+        console.log('🛑 Generation was stopped by user');
+        setError('Generation stopped by user');
+      } else {
+        const errorMessage = err instanceof Error ? err.message : 'An error occurred';
+        console.error('Error in sendMessage:', errorMessage);
+        setError(errorMessage);
+      }
       setIsLoading(false);
+      abortControllerRef.current = null;
       throw err;
     }
   }, []);
@@ -109,6 +138,7 @@ export const useOllama = () => {
     availableModels,
     checkConnection,
     sendMessage,
+    stopGeneration,
     refreshModels
   };
 };

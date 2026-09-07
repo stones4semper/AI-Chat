@@ -1,8 +1,9 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { 
-  Send, User, Bot, Copy, Check, RefreshCw, Pin, PinOff, Cpu,
-  Edit2, X, ChevronDown, ChevronUp, Code, Terminal, FileText,
-  ArrowDown, History, RotateCcw, Loader2, Reply, Quote
+  Send, User, Copy, Check, RefreshCw, Pin, PinOff, Cpu,
+  Edit2, X, Terminal, FileText,
+  ArrowDown, RotateCcw, Loader2, Reply, Quote, Eye, EyeOff,
+  CheckCheck, Square
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -11,85 +12,161 @@ import type { Message } from '@/types';
 import { useChat } from '@/context/ChatContext';
 import remarkGfm from 'remark-gfm';
 
+// UPDATE: Add onStopGeneration to the interface
 interface ChatInterfaceProps {
   messages: Message[];
   onSendMessage: (content: string, messageId?: string, replyToId?: string) => Promise<void>;
   onRegenerateMessage: (messageId: string) => Promise<void>;
+  onStopGeneration?: () => void; // Added this
   isLoading: boolean;
   chatId: string | null;
 }
 
-interface CodeBlockProps {
-  language: string;
-  value: string;
-  onCopy: (code: string) => void;
-  copiedCode: string | null;
-}
+// Detect if content contains HTML code
+const detectHtml = (content: string): { isHtml: boolean; htmlContent: string } => {
+  const htmlPattern = /<!DOCTYPE\s+html|<html[\s>]|<\w+[^>]*>[\s\S]*<\/\w+>/i;
+  const match = content.match(htmlPattern);
+  
+  if (match) {
+    const startIndex = content.indexOf(match[0]);
+    let endIndex = content.lastIndexOf('</html>');
+    if (endIndex === -1) {
+      endIndex = content.lastIndexOf('</body>');
+    }
+    if (endIndex === -1) {
+      endIndex = content.length;
+    } else {
+      endIndex += 7;
+    }
+    
+    const htmlContent = content.substring(startIndex, endIndex).trim();
+    return { isHtml: true, htmlContent };
+  }
+  
+  return { isHtml: false, htmlContent: '' };
+};
 
 // Code Block Component
-const CodeBlock: React.FC<CodeBlockProps> = ({ language, value, onCopy, copiedCode }) => {
+const CodeBlock: React.FC<{ 
+  language: string; 
+  value: string; 
+  onCopy: (code: string) => void; 
+  copiedCode: string | null;
+  isHtml?: boolean;
+}> = ({ language, value, onCopy, copiedCode, isHtml = false }) => {
   const [isHovered, setIsHovered] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
   const isCopied = copiedCode === value;
 
   return (
     <div 
-      className="relative group my-2"
+      className="relative group my-3 rounded-lg overflow-hidden border border-gray-200/50 shadow-sm"
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
-      <div className="flex items-center justify-between bg-[#1e1e1e] text-gray-300 text-xs px-3 py-1.5 rounded-t-lg border-b border-gray-700">
-        <div className="flex items-center gap-2">
-          <Terminal size={12} />
-          <span className="font-mono">{language || 'text'}</span>
+      <div className="flex items-center justify-between bg-[#1e1e1e] text-gray-300 px-4 py-2">
+        <div className="flex items-center gap-2.5">
+          <Terminal size={14} className="text-gray-400" />
+          <span className="text-xs font-mono font-medium text-gray-300 uppercase tracking-wider">
+            {language || 'html'}
+          </span>
+          <span className="text-[10px] text-gray-500">
+            {value.split('\n').length} lines
+          </span>
         </div>
-        <button
-          onClick={() => onCopy(value)}
-          className={`
-            flex items-center gap-1.5 px-2 py-0.5 rounded transition-all duration-200
-            ${isCopied 
-              ? 'text-green-400 bg-green-400/10' 
-              : 'text-gray-400 hover:text-white hover:bg-gray-700'
-            }
-            ${isHovered || isCopied ? 'opacity-100' : 'opacity-0'}
-          `}
-        >
-          {isCopied ? (
-            <>
-              <Check size={12} />
-              <span className="text-[10px]">Copied!</span>
-            </>
-          ) : (
-            <>
-              <Copy size={12} />
-              <span className="text-[10px]">Copy</span>
-            </>
+        <div className="flex items-center gap-1.5">
+          {isHtml && (
+            <button
+              onClick={() => setShowPreview(!showPreview)}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-md hover:bg-gray-700 transition-colors text-gray-400 hover:text-white text-xs"
+            >
+              {showPreview ? (
+                <>
+                  <EyeOff size={14} />
+                  Code
+                </>
+              ) : (
+                <>
+                  <Eye size={14} />
+                  Preview
+                </>
+              )}
+            </button>
           )}
-        </button>
+          
+          <button
+            onClick={() => onCopy(value)}
+            className={`
+              flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-all duration-200
+              ${isCopied 
+                ? 'text-green-400 bg-green-400/10' 
+                : 'text-gray-400 hover:text-white hover:bg-gray-700'
+              }
+              ${isHovered || isCopied ? 'opacity-100' : 'opacity-0'}
+            `}
+          >
+            {isCopied ? (
+              <>
+                <CheckCheck size={14} />
+                <span className="text-xs">Copied!</span>
+              </>
+            ) : (
+              <>
+                <Copy size={14} />
+                <span className="text-xs">Copy</span>
+              </>
+            )}
+          </button>
+        </div>
       </div>
-      <SyntaxHighlighter
-        language={language || 'text'}
-        style={vscDarkPlus}
-        customStyle={{
-          margin: 0,
-          borderRadius: '0 0 0.5rem 0.5rem',
-          fontSize: '13px',
-          lineHeight: '1.6',
-        }}
-        showLineNumbers={value.split('\n').length > 3}
-        wrapLines={true}
-        wrapLongLines={true}
-      >
-        {value}
-      </SyntaxHighlighter>
+
+      {isHtml && showPreview ? (
+        <div className="bg-white p-4">
+          <div className="text-xs text-gray-500 mb-2 flex items-center gap-2">
+            <FileText size={12} />
+            <span>HTML Preview</span>
+          </div>
+          <div 
+            className="prose prose-sm max-w-none p-4 bg-gray-50 rounded-lg border border-gray-200"
+            dangerouslySetInnerHTML={{ __html: value }}
+          />
+        </div>
+      ) : (
+        <SyntaxHighlighter
+          language={language || 'html'}
+          style={vscDarkPlus}
+          customStyle={{
+            margin: 0,
+            padding: '16px',
+            fontSize: '13px',
+            lineHeight: '1.7',
+            background: '#0d1117',
+            borderRadius: 0,
+          }}
+          showLineNumbers={value.split('\n').length > 2}
+          wrapLines={true}
+          wrapLongLines={true}
+          lineNumberStyle={{
+            color: '#4a4a4a',
+            fontSize: '12px',
+            minWidth: '2.5em',
+            paddingRight: '1em',
+            userSelect: 'none',
+          }}
+        >
+          {value}
+        </SyntaxHighlighter>
+      )}
     </div>
   );
 };
 
-// Main Chat Interface Component
+// Main Chat Interface Component - UPDATE: Add onStopGeneration to destructuring
 const ChatInterface: React.FC<ChatInterfaceProps> = ({
   messages,
   onSendMessage,
   onRegenerateMessage,
+  onStopGeneration, // Added this
   isLoading,
   chatId,
 }) => {
@@ -103,14 +180,13 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [replyToId, setReplyToId] = useState<string | null>(null);
-  const [replyToContent, setReplyToContent] = useState<string>('');
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const editInputRef = useRef<HTMLTextAreaElement>(null);
   
-  const { togglePinChat, chats, currentChatId } = useChat();
+  const { togglePinChat, chats } = useChat();
   const currentChat = chats.find(c => c.id === chatId);
 
   // Smart scrolling logic
@@ -193,16 +269,13 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     const message = input.trim();
     setInput('');
     
-    // If replying to a message, include the reply context
     if (replyToId) {
       await onSendMessage(message, undefined, replyToId);
       setReplyToId(null);
-      setReplyToContent('');
     } else {
       await onSendMessage(message);
     }
     
-    // Reset scroll state
     isUserScrolling.current = false;
     setNewMessagesCount(0);
     setIsAtBottom(true);
@@ -268,13 +341,11 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
   const handleReply = (message: Message) => {
     setReplyToId(message.id);
-    setReplyToContent(message.content);
     inputRef.current?.focus();
   };
 
   const handleCancelReply = () => {
     setReplyToId(null);
-    setReplyToContent('');
   };
 
   const handleJumpToLatest = () => {
@@ -284,7 +355,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     scrollToBottom(true);
   };
 
-  // Format time
   const formatTime = (date: Date) => {
     return new Date(date).toLocaleTimeString('en-US', {
       hour: '2-digit',
@@ -292,7 +362,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     });
   };
 
-  // Get model display name
   const getModelDisplayName = (modelName: string) => {
     if (!modelName) return 'Qwen';
     const name = modelName.toLowerCase();
@@ -306,7 +375,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
            modelName.split(':')[0].slice(1);
   };
 
-  // Get model color
   const getModelColor = (modelName: string) => {
     if (!modelName) return 'text-blue-600 bg-blue-50 border-blue-200';
     const name = modelName.toLowerCase();
@@ -319,12 +387,114 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     return 'text-gray-600 bg-gray-50 border-gray-200';
   };
 
-  // Get reply preview
   const getReplyPreview = (messageId: string) => {
     const message = messages.find(m => m.id === messageId);
     if (!message) return '';
     const preview = message.content.slice(0, 60) + (message.content.length > 60 ? '...' : '');
     return `Replying to: "${preview}"`;
+  };
+
+  // Process message content to detect and highlight HTML
+  const renderMessageContent = (content: string, isUser: boolean) => {
+    const { isHtml, htmlContent } = detectHtml(content);
+    
+    if (isHtml) {
+      const beforeHtml = content.substring(0, content.indexOf(htmlContent));
+      const afterHtml = content.substring(content.indexOf(htmlContent) + htmlContent.length);
+      
+      return (
+        <>
+          {beforeHtml && (
+            <div className="prose prose-sm max-w-none prose-gray">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {beforeHtml}
+              </ReactMarkdown>
+            </div>
+          )}
+          <CodeBlock
+            language="html"
+            value={htmlContent}
+            onCopy={copyCodeToClipboard}
+            copiedCode={copiedCode}
+            isHtml={true}
+          />
+          {afterHtml && (
+            <div className="prose prose-sm max-w-none prose-gray">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {afterHtml}
+              </ReactMarkdown>
+            </div>
+          )}
+        </>
+      );
+    }
+    
+    return (
+      <div
+        className={`
+          prose prose-sm max-w-none
+          ${isUser ? 'prose-invert' : 'prose-gray'}
+          prose-pre:bg-transparent prose-pre:p-0
+          prose-code:bg-gray-100 prose-code:text-gray-800 prose-code:px-1 prose-code:py-0.5 prose-code:rounded
+          prose-pre:code:bg-transparent prose-pre:code:text-inherit
+          prose-headings:font-semibold
+          prose-a:text-blue-600 prose-a:no-underline hover:prose-a:underline
+          prose-table:border-collapse prose-th:border prose-th:border-gray-300 prose-th:px-4 prose-th:py-2
+          prose-td:border prose-td:border-gray-300 prose-td:px-4 prose-td:py-2
+          prose-blockquote:border-l-4 prose-blockquote:border-gray-300 prose-blockquote:pl-4 prose-blockquote:text-gray-600
+          prose-code:before:content-none prose-code:after:content-none
+        `}
+      >
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          components={{
+            code({ node, className, children, ...props }) {
+              const match = /language-(\w+)/.exec(className || '');
+              const language = match ? match[1] : '';
+              const inline = !className || !className.includes('language-');
+              const codeString = String(children).replace(/\n$/, '');
+              
+              if (!inline && language) {
+                return (
+                  <CodeBlock
+                    language={language}
+                    value={codeString}
+                    onCopy={copyCodeToClipboard}
+                    copiedCode={copiedCode}
+                    isHtml={language === 'html' || language === 'htm'}
+                  />
+                );
+              }
+              
+              return (
+                <code className={className} {...props}>
+                  {children}
+                </code>
+              );
+            },
+            table: ({ children }) => (
+              <div className="overflow-x-auto my-2">
+                <table className="min-w-full divide-y divide-gray-200 border border-gray-200 rounded-lg">
+                  {children}
+                </table>
+              </div>
+            ),
+            a: ({ href, children }) => (
+              <a 
+                href={href} 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="text-blue-600 hover:text-blue-800 underline decoration-2 decoration-blue-300 hover:decoration-blue-500 transition-colors"
+              >
+                {children}
+              </a>
+            ),
+          }}
+        >
+          {content}
+        </ReactMarkdown>
+      </div>
+    );
   };
 
   return (
@@ -395,7 +565,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                     isUser ? 'flex-row-reverse' : ''
                   } ${isReplying ? 'opacity-70' : ''}`}
                 >
-                  {/* Avatar */}
                   <div
                     className={`
                       flex-shrink-0 w-8 h-8 rounded-xl flex items-center justify-center
@@ -412,7 +581,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                     )}
                   </div>
 
-                  {/* Message Content */}
                   <div
                     className={`
                       flex-1 max-w-[85%] ${isUser ? 'flex justify-end' : ''}
@@ -430,7 +598,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                         group
                       `}
                     >
-                      {/* Edit Mode */}
                       {isEditing ? (
                         <div className="space-y-2">
                           <textarea
@@ -464,7 +631,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                         </div>
                       ) : (
                         <>
-                          {/* Reply Indicator */}
                           {message.replyToId && (
                             <div className="flex items-center gap-1.5 mb-1.5 text-[10px] opacity-60 border-l-2 border-[#006633] pl-2">
                               <Quote size={10} />
@@ -472,7 +638,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                             </div>
                           )}
 
-                          {/* Message Header with Actions */}
                           <div className="flex items-center justify-between gap-2 mb-1">
                             <div className="flex items-center gap-2">
                               <span className="text-[10px] font-medium opacity-70">
@@ -483,9 +648,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                               )}
                             </div>
                             
-                            {/* Action Buttons - Visible on Hover */}
                             <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                              {/* Reply button */}
                               {!isUser && (
                                 <button
                                   onClick={() => handleReply(message)}
@@ -500,7 +663,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                                 </button>
                               )}
                               
-                              {/* Edit button for user messages */}
                               {isUser && (
                                 <button
                                   onClick={() => handleEditMessage(message)}
@@ -515,7 +677,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                                 </button>
                               )}
                               
-                              {/* Copy button */}
                               <button
                                 onClick={() => copyToClipboard(message.content, message.id)}
                                 className={`p-1 rounded transition-colors ${
@@ -532,7 +693,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                                 )}
                               </button>
                               
-                              {/* Regenerate button for assistant messages */}
                               {!isUser && (
                                 <button
                                   onClick={() => handleRegenerate(message.id)}
@@ -550,71 +710,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                             </div>
                           </div>
 
-                          {/* Message Text */}
-                          <div
-                            className={`
-                              prose prose-sm max-w-none
-                              ${isUser ? 'prose-invert' : 'prose-gray'}
-                              prose-pre:bg-transparent prose-pre:p-0
-                              prose-code:bg-gray-100 prose-code:text-gray-800 prose-code:px-1 prose-code:py-0.5 prose-code:rounded
-                              prose-pre:code:bg-transparent prose-pre:code:text-inherit
-                              prose-headings:font-semibold
-                              prose-a:text-blue-600 prose-a:no-underline hover:prose-a:underline
-                              prose-table:border-collapse prose-th:border prose-th:border-gray-300 prose-th:px-4 prose-th:py-2
-                              prose-td:border prose-td:border-gray-300 prose-td:px-4 prose-td:py-2
-                              prose-blockquote:border-l-4 prose-blockquote:border-gray-300 prose-blockquote:pl-4 prose-blockquote:text-gray-600
-                            `}
-                          >
-                            <ReactMarkdown
-                              remarkPlugins={[remarkGfm]}
-                              components={{
-                                code({ node, className, children, ...props }) {
-                                  const match = /language-(\w+)/.exec(className || '');
-                                  const language = match ? match[1] : '';
-                                  const inline = !className || !className.includes('language-');
-                                  const codeString = String(children).replace(/\n$/, '');
-                                  
-                                  if (!inline && language) {
-                                    return (
-                                      <CodeBlock
-                                        language={language}
-                                        value={codeString}
-                                        onCopy={copyCodeToClipboard}
-                                        copiedCode={copiedCode}
-                                      />
-                                    );
-                                  }
-                                  
-                                  return (
-                                    <code className={className} {...props}>
-                                      {children}
-                                    </code>
-                                  );
-                                },
-                                table: ({ children }) => (
-                                  <div className="overflow-x-auto my-2">
-                                    <table className="min-w-full divide-y divide-gray-200 border border-gray-200 rounded-lg">
-                                      {children}
-                                    </table>
-                                  </div>
-                                ),
-                                a: ({ href, children }) => (
-                                  <a 
-                                    href={href} 
-                                    target="_blank" 
-                                    rel="noopener noreferrer"
-                                    className="text-blue-600 hover:text-blue-800 underline decoration-2 decoration-blue-300 hover:decoration-blue-500 transition-colors"
-                                  >
-                                    {children}
-                                  </a>
-                                ),
-                              }}
-                            >
-                              {message.content}
-                            </ReactMarkdown>
-                          </div>
+                          {renderMessageContent(message.content, isUser)}
 
-                          {/* Timestamp */}
                           <div
                             className={`
                               text-[10px] mt-1.5
@@ -671,7 +768,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
       {/* Input Area */}
       <div className="border-t border-[#006633]/10 bg-white/80 backdrop-blur-sm flex-shrink-0">
-        {/* Reply Indicator */}
         {replyToId && (
           <div className="max-w-4xl mx-auto px-4 pt-3">
             <div className="flex items-center justify-between bg-[#006633]/5 border border-[#006633]/20 rounded-xl px-3 py-2">
@@ -722,7 +818,18 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 </button>
               )}
               {isLoading && (
-                <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-2">
+                  {/* Stop Button */}
+                  {onStopGeneration && (
+                    <button
+                      type="button"
+                      onClick={onStopGeneration}
+                      className="p-2 bg-red-500 hover:bg-red-600 text-white rounded-lg transition-colors shadow-md"
+                      title="Stop generating"
+                    >
+                      <Square size={16} />
+                    </button>
+                  )}
                   <RefreshCw size={18} className="text-[#006633]/40 animate-spin" />
                 </div>
               )}
