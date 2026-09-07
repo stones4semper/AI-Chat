@@ -1,18 +1,22 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Sparkles, AlertCircle, Scale, Shield, Loader2 } from 'lucide-react';
+import { Sparkles, AlertCircle, Scale, Shield, Loader2, Star } from 'lucide-react';
 import Sidebar from '@/components/Sidebar';
 import ChatInterface from '@/components/ChatInterface';
 import LoadingScreen from '@/components/LoadingScreen';
 import Logo from '@/components/Logo';
 import ModelSelector from '@/components/ModelSelector';
 import ConnectionStatus from '@/components/ConnectionStatus';
+import { StyleToneSelector } from '@/components/StyleToneSelector';
+import { StarredDrawer } from '@/components/StarredDrawer';
 import { ChatProvider, useChat } from '@/context/ChatContext';
 import { useOllama } from '@/hooks/useOllama';
-import type { Message } from '@/types';
+import { buildSystemPrompt } from '@/services/ollama';
+import type { Message, Attachment } from '@/types';
 
 const ChatApp: React.FC = () => {
   const [isMobileOpen, setIsMobileOpen] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
+  const [isStarredDrawerOpen, setIsStarredDrawerOpen] = useState(false);
   const isProcessing = useRef(false);
   
   const { 
@@ -25,8 +29,17 @@ const ChatApp: React.FC = () => {
     setLoading,
     isLoading,
     truncateMessages,
-    createNewChat
+    createNewChat,
+    selectChat,
+    setChatTone,
+    setChatVerbosity,
+    setChatSystemPrompt
   } = useChat();
+
+  const totalStarredCount = chats.reduce(
+    (acc, chat) => acc + chat.messages.filter(m => m.starred).length,
+    0
+  );
   
   const { 
     isLoading: ollamaLoading, 
@@ -89,7 +102,9 @@ const ChatApp: React.FC = () => {
   const handleSendMessage = useCallback(async (
     content: string, 
     editMessageId?: string,
-    replyToId?: string
+    replyToId?: string,
+    attachments?: Attachment[],
+    images?: string[]
   ) => {
     // Prevent double submission
     if (isProcessing.current) {
@@ -129,7 +144,9 @@ const ChatApp: React.FC = () => {
           ...currentChat.messages[messageIndex],
           content: content,
           edited: true,
-          timestamp: new Date()
+          timestamp: new Date(),
+          attachments: attachments && attachments.length > 0 ? attachments : currentChat.messages[messageIndex].attachments,
+          images: images && images.length > 0 ? images : currentChat.messages[messageIndex].images
         };
         addMessage(currentChatId, updatedUserMessage);
 
@@ -143,7 +160,9 @@ const ChatApp: React.FC = () => {
           role: 'user',
           content: content,
           timestamp: new Date(),
-          replyToId: replyToId || undefined
+          replyToId: replyToId || undefined,
+          attachments: attachments && attachments.length > 0 ? attachments : undefined,
+          images: images && images.length > 0 ? images : undefined
         };
         addMessage(currentChatId, userMessage);
 
@@ -164,6 +183,11 @@ const ChatApp: React.FC = () => {
       console.log(`🤖 Generating response with model: ${model}`);
       
       let fullResponse = '';
+      const systemPrompt = buildSystemPrompt(
+        currentChat.systemPrompt,
+        currentChat.tone,
+        currentChat.verbosity
+      );
 
       await sendMessage(
         messagesToSend,
@@ -171,7 +195,8 @@ const ChatApp: React.FC = () => {
         (chunk) => {
           fullResponse += chunk;
           updateMessage(currentChatId, assistantMessageId, fullResponse);
-        }
+        },
+        systemPrompt
       );
       
       console.log('✅ Message sent successfully');
@@ -239,6 +264,11 @@ const ChatApp: React.FC = () => {
       console.log(`🤖 Regenerating response with model: ${model}`);
       
       let fullResponse = '';
+      const systemPrompt = buildSystemPrompt(
+        currentChat.systemPrompt,
+        currentChat.tone,
+        currentChat.verbosity
+      );
 
       await sendMessage(
         messagesToSend,
@@ -246,7 +276,8 @@ const ChatApp: React.FC = () => {
         (chunk) => {
           fullResponse += chunk;
           updateMessage(currentChatId, newAssistantId, fullResponse);
-        }
+        },
+        systemPrompt
       );
       
       console.log('✅ Message regenerated successfully');
@@ -305,13 +336,37 @@ const ChatApp: React.FC = () => {
             )}
           </div>
           
-          <div className="flex items-center gap-3 flex-shrink-0">
+          <div className="flex items-center gap-2.5 flex-shrink-0">
             {currentChat && (
-              <ModelSelector
-                currentModel={currentChat.model || 'qwen:latest'}
-                onModelChange={handleModelChange}
-              />
+              <>
+                <ModelSelector
+                  currentModel={currentChat.model || 'qwen:latest'}
+                  onModelChange={handleModelChange}
+                />
+                <StyleToneSelector
+                  currentTone={currentChat.tone || 'default'}
+                  currentVerbosity={currentChat.verbosity || 'balanced'}
+                  customSystemPrompt={currentChat.systemPrompt || ''}
+                  onSelectTone={(tone) => currentChatId && setChatTone(currentChatId, tone)}
+                  onSelectVerbosity={(verb) => currentChatId && setChatVerbosity(currentChatId, verb)}
+                  onSaveSystemPrompt={(prompt) => currentChatId && setChatSystemPrompt(currentChatId, prompt)}
+                />
+              </>
             )}
+
+            {/* Bookmarks / Starred button */}
+            <button
+              onClick={() => setIsStarredDrawerOpen(true)}
+              className="relative p-2 rounded-lg bg-white/80 hover:bg-gray-100 border border-[#006633]/20 text-amber-500 hover:text-amber-600 transition-colors shadow-xs"
+              title="View bookmarked messages"
+            >
+              <Star className={`w-4 h-4 ${totalStarredCount > 0 ? 'fill-amber-400' : ''}`} />
+              {totalStarredCount > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-amber-500 text-white rounded-full text-[10px] font-bold flex items-center justify-center shadow-xs">
+                  {totalStarredCount}
+                </span>
+              )}
+            </button>
             
             <ConnectionStatus 
               showDetails={true} 
@@ -392,6 +447,24 @@ const ChatApp: React.FC = () => {
           )}
         </div>
       </div>
+
+      <StarredDrawer
+        isOpen={isStarredDrawerOpen}
+        onClose={() => setIsStarredDrawerOpen(false)}
+        onJumpToMessage={(chatId, messageId) => {
+          selectChat(chatId);
+          setTimeout(() => {
+            const el = document.getElementById(`message-${messageId}`);
+            if (el) {
+              el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              el.classList.add('ring-2', 'ring-amber-400', 'ring-offset-2');
+              setTimeout(() => {
+                el.classList.remove('ring-2', 'ring-amber-400', 'ring-offset-2');
+              }, 2000);
+            }
+          }, 300);
+        }}
+      />
     </div>
   );
 };

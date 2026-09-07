@@ -1,7 +1,60 @@
 import axios from 'axios';
-import type { OllamaResponse, OllamaModel } from '@/types';
+import type { OllamaResponse, OllamaModel, ResponseTone, ResponseVerbosity } from '@/types';
 
 const API_BASE_URL = typeof window !== 'undefined' ? '/api' : 'http://127.0.0.1:11434/api';
+
+export const buildSystemPrompt = (
+  customSystemPrompt?: string,
+  tone?: ResponseTone,
+  verbosity?: ResponseVerbosity
+): string => {
+  const parts: string[] = [];
+
+  // Base identity / custom prompt
+  if (customSystemPrompt?.trim()) {
+    parts.push(customSystemPrompt.trim());
+  } else {
+    parts.push('You are an expert, highly intelligent AI assistant dedicated to accuracy, honesty, and helpfulness.');
+  }
+
+  // Tone instruction
+  if (tone && tone !== 'default') {
+    switch (tone) {
+      case 'professional':
+        parts.push('Adopt a formal, authoritative, and polite professional tone. Ensure answers are well-structured and business-appropriate.');
+        break;
+      case 'casual':
+        parts.push('Adopt a friendly, conversational, and approachable tone. Speak like a helpful and relaxed teammate.');
+        break;
+      case 'academic':
+        parts.push('Adopt an academic and scholarly tone. Provide thorough explanations, cite fundamental concepts, and use precise analytical language.');
+        break;
+      case 'technical':
+        parts.push('Adopt a technical, developer-centric tone. Emphasize architecture, implementation details, code correctness, and practical technical steps.');
+        break;
+      case 'customs':
+        parts.push('Adopt the persona of a senior Nigeria Customs Service intelligence & trade specialist. Emphasize justice, honesty, trade compliance, tariff classification, and border regulatory accuracy.');
+        break;
+    }
+  }
+
+  // Verbosity instruction
+  if (verbosity) {
+    switch (verbosity) {
+      case 'concise':
+        parts.push('Keep responses brief, direct, and to the point. Omit filler and conversational pleasantries.');
+        break;
+      case 'detailed':
+        parts.push('Provide comprehensive, deep explanations with examples, edge cases, and step-by-step guidance.');
+        break;
+      case 'balanced':
+        parts.push('Provide balanced answers that are thorough yet clear, structured, and easy to read.');
+        break;
+    }
+  }
+
+  return parts.join(' ');
+};
 
 export const ollamaService = {
   async getModels(): Promise<OllamaModel[]> {
@@ -17,20 +70,27 @@ export const ollamaService = {
   },
 
   async generateResponse(
-    promptOrMessages: string | Array<{ role: string; content: string }>, 
-    model: string = 'qwen:latest'
+    promptOrMessages: string | Array<{ role: string; content: string; images?: string[] }>, 
+    model: string = 'qwen:latest',
+    systemPrompt?: string,
+    options?: Record<string, any>
   ): Promise<string> {
     try {
-      const messages = typeof promptOrMessages === 'string'
+      let messages: Array<{ role: string; content: string; images?: string[] }> = typeof promptOrMessages === 'string'
         ? [{ role: 'user', content: promptOrMessages }]
-        : promptOrMessages;
+        : [...promptOrMessages];
+
+      if (systemPrompt && !messages.some(m => m.role === 'system')) {
+        messages = [{ role: 'system', content: systemPrompt }, ...messages];
+      }
 
       const response = await axios.post<OllamaResponse>(
         `${API_BASE_URL}/chat`,
         {
           model: model,
           messages: messages,
-          stream: false
+          stream: false,
+          options: options
         },
         {
           timeout: 60000
@@ -53,15 +113,21 @@ export const ollamaService = {
   },
 
   async streamResponse(
-    promptOrMessages: string | Array<{ role: string; content: string }>, 
+    promptOrMessages: string | Array<{ role: string; content: string; images?: string[] }>, 
     model: string = 'qwen:latest',
     onChunk: (chunk: string) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    systemPrompt?: string,
+    options?: Record<string, any>
   ): Promise<void> {
     try {
-      const messages = typeof promptOrMessages === 'string'
+      let messages: Array<{ role: string; content: string; images?: string[] }> = typeof promptOrMessages === 'string'
         ? [{ role: 'user', content: promptOrMessages }]
-        : promptOrMessages;
+        : [...promptOrMessages];
+
+      if (systemPrompt && !messages.some(m => m.role === 'system')) {
+        messages = [{ role: 'system', content: systemPrompt }, ...messages];
+      }
 
       const response = await fetch(`${API_BASE_URL}/chat`, {
         method: 'POST',
@@ -71,9 +137,10 @@ export const ollamaService = {
         body: JSON.stringify({
           model: model,
           messages: messages,
-          stream: true
+          stream: true,
+          options: options
         }),
-        signal: signal // Add abort signal
+        signal: signal
       });
 
       if (!response.ok) {

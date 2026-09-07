@@ -56,7 +56,9 @@ export const useOllama = () => {
   const sendMessage = useCallback(async (
     messages: Message[],
     model: string = 'qwen:latest',
-    onChunk?: (chunk: string) => void
+    onChunk?: (chunk: string) => void,
+    systemPrompt?: string,
+    options?: Record<string, any>
   ): Promise<string> => {
     setIsLoading(true);
     setError(null);
@@ -82,7 +84,8 @@ export const useOllama = () => {
 
       const messagesPayload = messages.map(m => ({
         role: m.role,
-        content: m.content
+        content: m.content,
+        ...(m.images && m.images.length > 0 ? { images: m.images } : {})
       }));
 
       let fullResponse = '';
@@ -95,10 +98,12 @@ export const useOllama = () => {
             fullResponse += chunk;
             onChunk(chunk);
           },
-          abortControllerRef.current.signal
+          abortControllerRef.current.signal,
+          systemPrompt,
+          options
         );
       } else {
-        fullResponse = await ollamaService.generateResponse(messagesPayload, model);
+        fullResponse = await ollamaService.generateResponse(messagesPayload, model, systemPrompt, options);
       }
       
       setIsLoading(false);

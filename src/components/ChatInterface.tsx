@@ -3,21 +3,26 @@ import {
   Send, User, Copy, Check, RefreshCw, Pin, PinOff, Cpu,
   Edit2, X, Terminal, FileText, Code,
   ArrowDown, RotateCcw, Loader2, Reply, Quote, Eye, EyeOff,
-  CheckCheck, Square
+  CheckCheck, Square, Paperclip
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import type { Message } from '@/types';
+import type { Message, ResponseTone, ResponseVerbosity, Attachment } from '@/types';
 import { useChat } from '@/context/ChatContext';
 import remarkGfm from 'remark-gfm';
+import { ReasoningAccordion, extractReasoning } from '@/components/ReasoningAccordion';
+import { MessageReactions } from '@/components/MessageReactions';
+import { MarkdownToolbar } from '@/components/MarkdownToolbar';
+import { FileAttachmentPreview } from '@/components/FileAttachmentPreview';
+import { PromptSuggestions } from '@/components/PromptSuggestions';
 
-// UPDATE: Add onStopGeneration to the interface
+// UPDATE: Add onStopGeneration and attachments/images to interface
 interface ChatInterfaceProps {
   messages: Message[];
-  onSendMessage: (content: string, messageId?: string, replyToId?: string) => Promise<void>;
+  onSendMessage: (content: string, messageId?: string, replyToId?: string, attachments?: Attachment[], images?: string[]) => Promise<void>;
   onRegenerateMessage: (messageId: string) => Promise<void>;
-  onStopGeneration?: () => void; // Added this
+  onStopGeneration?: () => void;
   isLoading: boolean;
   chatId: string | null;
 }
@@ -417,6 +422,22 @@ const CodeBlock: React.FC<{
   );
 };
 
+interface SlashCommand {
+  command: string;
+  syntax: string;
+  description: string;
+  icon: string;
+}
+
+const SLASH_COMMANDS: SlashCommand[] = [
+  { command: '/model', syntax: '/model <name>', description: 'Switch Ollama model for this chat', icon: '🤖' },
+  { command: '/tone', syntax: '/tone <persona>', description: 'Set tone (professional, casual, academic, technical, customs)', icon: '🎭' },
+  { command: '/verbosity', syntax: '/verbosity <level>', description: 'Set response depth (concise, balanced, detailed)', icon: '📏' },
+  { command: '/system', syntax: '/system <prompt>', description: 'Set custom system prompt instructions', icon: '⚙️' },
+  { command: '/clear', syntax: '/clear', description: 'Clear messages in this conversation', icon: '🧹' },
+  { command: '/help', syntax: '/help', description: 'Show all available slash commands', icon: '💡' },
+];
+
 // Main Chat Interface Component - UPDATE: Add onStopGeneration to destructuring
 const ChatInterface: React.FC<ChatInterfaceProps> = ({
   messages,
@@ -435,14 +456,34 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [replyToId, setReplyToId] = useState<string | null>(null);
+  const [showSlashMenu, setShowSlashMenu] = useState(false);
+  const [selectedSlashIndex, setSelectedSlashIndex] = useState(0);
   
+  const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const editInputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   
-  const { togglePinChat, chats } = useChat();
+  const {
+    togglePinChat,
+    chats,
+    toggleStarMessage,
+    addReaction,
+    setFeedback,
+    setChatTone,
+    setChatVerbosity,
+    setChatSystemPrompt,
+    changeModel,
+    truncateMessages,
+    addMessage,
+  } = useChat();
   const currentChat = chats.find(c => c.id === chatId);
+
+  const matchingSlashCommands = SLASH_COMMANDS.filter(cmd =>
+    cmd.command.toLowerCase().startsWith(input.trim().toLowerCase())
+  );
 
   // Smart scrolling logic
   const isUserScrolling = useRef(false);
@@ -517,18 +558,227 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     }
   }, [editingMessageId]);
 
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    Array.from(files).forEach((file) => {
+      if (file.type.startsWith('image/')) {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          const fullDataUrl = event.target?.result as string;
+          const base64Raw = fullDataUrl.includes(',') ? fullDataUrl.split(',')[1] : fullDataUrl;
+          const newAttachment: Attachment = {
+            id: `${Date.now()}_${Math.random()}`,
+            name: file.name,
+            type: 'image',
+            mimeType: file.type,
+            size: file.size,
+            data: base64Raw,
+            previewUrl: fullDataUrl,
+          };
+          setPendingAttachments((prev) => [...prev, newAttachment]);
+        };
+        reader.readAsDataURL(file);
+      } else {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          const textContent = event.target?.result as string;
+          const newAttachment: Attachment = {
+            id: `${Date.now()}_${Math.random()}`,
+            name: file.name,
+            type: 'text',
+            mimeType: file.type || 'text/plain',
+            size: file.size,
+            data: textContent,
+          };
+          setPendingAttachments((prev) => [...prev, newAttachment]);
+        };
+        reader.readAsText(file);
+      }
+    });
+
+    if (e.target) {
+      e.target.value = '';
+    }
+  };
+
+  const handleRemoveAttachment = (id: string) => {
+    setPendingAttachments((prev) => prev.filter((a) => a.id !== id));
+  };
+
+  const handleInsertMarkdown = (prefix: string, suffix: string = '', defaultText: string = '') => {
+    const inputEl = inputRef.current;
+    if (!inputEl) {
+      setInput((prev) => prev + prefix + defaultText + suffix);
+      return;
+    }
+
+    const start = inputEl.selectionStart ?? input.length;
+    const end = inputEl.selectionEnd ?? input.length;
+    const selectedText = input.substring(start, end) || defaultText;
+
+    const newText = input.substring(0, start) + prefix + selectedText + suffix + input.substring(end);
+    setInput(newText);
+
+    setTimeout(() => {
+      inputEl.focus();
+      inputEl.setSelectionRange(start + prefix.length, start + prefix.length + selectedText.length);
+    }, 50);
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setInput(val);
+    if (val.startsWith('/') && !val.includes(' ') && val.length < 15) {
+      setShowSlashMenu(true);
+      setSelectedSlashIndex(0);
+    } else {
+      setShowSlashMenu(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || isLoading) return;
+    if ((!input.trim() && pendingAttachments.length === 0) || isLoading) return;
 
     const message = input.trim();
     setInput('');
+    setShowSlashMenu(false);
+
+    // Handle Slash Commands (only if no attachments)
+    if (message.startsWith('/') && pendingAttachments.length === 0) {
+      const [cmd, ...argsArr] = message.split(' ');
+      const arg = argsArr.join(' ').trim();
+      const lowerCmd = cmd.toLowerCase();
+
+      if (lowerCmd === '/clear') {
+        if (chatId) {
+          truncateMessages(chatId, 0);
+        }
+        return;
+      }
+
+      if (lowerCmd === '/model') {
+        if (arg && chatId) {
+          changeModel(chatId, arg);
+          addMessage(chatId, {
+            id: `sys_${Date.now()}`,
+            role: 'assistant',
+            content: `🤖 Model switched to **${arg}**.`,
+            timestamp: new Date()
+          });
+        } else {
+          addMessage(chatId || '', {
+            id: `sys_${Date.now()}`,
+            role: 'assistant',
+            content: `Current model is **${currentChat?.model || 'qwen:latest'}**.\nUsage: \`/model <model_name>\``,
+            timestamp: new Date()
+          });
+        }
+        return;
+      }
+
+      if (lowerCmd === '/tone') {
+        const validTones = ['default', 'professional', 'casual', 'academic', 'technical', 'customs'];
+        if (validTones.includes(arg.toLowerCase()) && chatId) {
+          setChatTone(chatId, arg.toLowerCase() as ResponseTone);
+          addMessage(chatId, {
+            id: `sys_${Date.now()}`,
+            role: 'assistant',
+            content: `🎭 Response tone set to **${arg.toLowerCase()}**.`,
+            timestamp: new Date()
+          });
+        } else {
+          addMessage(chatId || '', {
+            id: `sys_${Date.now()}`,
+            role: 'assistant',
+            content: `Current tone: **${currentChat?.tone || 'default'}**.\nOptions: \`${validTones.join(', ')}\`\nUsage: \`/tone <persona>\``,
+            timestamp: new Date()
+          });
+        }
+        return;
+      }
+
+      if (lowerCmd === '/verbosity') {
+        const validVerbosity = ['concise', 'balanced', 'detailed'];
+        if (validVerbosity.includes(arg.toLowerCase()) && chatId) {
+          setChatVerbosity(chatId, arg.toLowerCase() as ResponseVerbosity);
+          addMessage(chatId, {
+            id: `sys_${Date.now()}`,
+            role: 'assistant',
+            content: `📏 Response verbosity set to **${arg.toLowerCase()}**.`,
+            timestamp: new Date()
+          });
+        } else {
+          addMessage(chatId || '', {
+            id: `sys_${Date.now()}`,
+            role: 'assistant',
+            content: `Current verbosity: **${currentChat?.verbosity || 'balanced'}**.\nOptions: \`${validVerbosity.join(', ')}\`\nUsage: \`/verbosity <concise|balanced|detailed>\``,
+            timestamp: new Date()
+          });
+        }
+        return;
+      }
+
+      if (lowerCmd === '/system') {
+        if (arg && chatId) {
+          setChatSystemPrompt(chatId, arg);
+          addMessage(chatId, {
+            id: `sys_${Date.now()}`,
+            role: 'assistant',
+            content: `⚙️ Custom system instructions updated:\n> "${arg}"`,
+            timestamp: new Date()
+          });
+        } else {
+          addMessage(chatId || '', {
+            id: `sys_${Date.now()}`,
+            role: 'assistant',
+            content: `Usage: \`/system <your custom prompt instructions>\`\nCurrent prompt: ${currentChat?.systemPrompt || '(none)'}`,
+            timestamp: new Date()
+          });
+        }
+        return;
+      }
+
+      if (lowerCmd === '/help') {
+        addMessage(chatId || '', {
+          id: `sys_${Date.now()}`,
+          role: 'assistant',
+          content: `### 🛠️ Available Slash Commands\n\n` +
+            `• **/model <name>** - Switch Ollama model (e.g. \`/model llama3.2:latest\`)\n` +
+            `• **/tone <persona>** - Change persona (\`default\`, \`professional\`, \`casual\`, \`academic\`, \`technical\`, \`customs\`)\n` +
+            `• **/verbosity <level>** - Set response depth (\`concise\`, \`balanced\`, \`detailed\`)\n` +
+            `• **/system <prompt>** - Set custom system instructions\n` +
+            `• **/clear** - Clear all messages in this conversation\n` +
+            `• **/help** - Display this guide`,
+          timestamp: new Date()
+        });
+        return;
+      }
+    }
     
+    // Process attachments
+    const currentAttachments = [...pendingAttachments];
+    setPendingAttachments([]);
+
+    let finalContent = message;
+    const textAttachments = currentAttachments.filter(a => a.type === 'text');
+    if (textAttachments.length > 0) {
+      const docSnippets = textAttachments
+        .map(t => `\n\n[Attached Document: ${t.name}]\n\`\`\`\n${t.data}\n\`\`\``)
+        .join('');
+      finalContent = finalContent ? `${finalContent}${docSnippets}` : docSnippets.trim();
+    }
+
+    const imageAttachments = currentAttachments.filter(a => a.type === 'image');
+    const imagesBase64 = imageAttachments.length > 0 ? imageAttachments.map(a => a.data) : undefined;
+
     if (replyToId) {
-      await onSendMessage(message, undefined, replyToId);
+      await onSendMessage(finalContent, undefined, replyToId, currentAttachments, imagesBase64);
       setReplyToId(null);
     } else {
-      await onSendMessage(message);
+      await onSendMessage(finalContent, undefined, undefined, currentAttachments, imagesBase64);
     }
     
     isUserScrolling.current = false;
@@ -538,6 +788,36 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (showSlashMenu && matchingSlashCommands.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSelectedSlashIndex(prev => (prev + 1) % matchingSlashCommands.length);
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSelectedSlashIndex(prev => (prev - 1 + matchingSlashCommands.length) % matchingSlashCommands.length);
+        return;
+      }
+      if (e.key === 'Tab' || (e.key === 'Enter' && !input.includes(' '))) {
+        e.preventDefault();
+        const selected = matchingSlashCommands[selectedSlashIndex];
+        if (selected) {
+          if (selected.command === '/clear' || selected.command === '/help') {
+            setInput(selected.command);
+          } else {
+            setInput(selected.command + ' ');
+          }
+          setShowSlashMenu(false);
+          return;
+        }
+      }
+      if (e.key === 'Escape') {
+        setShowSlashMenu(false);
+        return;
+      }
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSubmit(e);
@@ -748,22 +1028,24 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
       >
         <div className="max-w-4xl mx-auto space-y-6">
           {messages.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-[60vh] text-center">
+            <div className="flex flex-col items-center justify-center min-h-[60vh] text-center py-6">
               <div className="w-20 h-20 bg-white rounded-3xl flex items-center justify-center mb-6 shadow-premium-sm border-2 border-[#006633]/20 p-2">
                 <img src="/logo.png" alt="NCS Logo" className="w-full h-full object-contain" />
               </div>
               <h2 className="text-2xl font-bold text-[#006633] mb-2">
                 Nigeria Customs AI
               </h2>
-              <p className="text-[#006633]/70 max-w-md mb-4">
+              <p className="text-[#006633]/70 max-w-md mb-4 text-sm">
                 Ask anything about customs, trade, or general inquiries. Justice & Honesty in every response.
               </p>
               {currentChat && currentChat.model && (
-                <div className="flex items-center gap-2 text-xs text-[#006633]/50 bg-white px-3 py-1.5 rounded-full border border-[#006633]/10">
+                <div className="flex items-center gap-2 text-xs text-[#006633]/50 bg-white px-3 py-1.5 rounded-full border border-[#006633]/10 mb-2">
                   <Cpu size={12} />
                   <span>Using <strong>{getModelDisplayName(currentChat.model)}</strong></span>
                 </div>
               )}
+              {/* Empty state starter cards */}
+              <PromptSuggestions onSelectPrompt={(p) => onSendMessage(p)} mode="empty_state" />
             </div>
           ) : (
             messages.map((message, index) => {
@@ -771,10 +1053,17 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
               const isEditing = editingMessageId === message.id;
               const isRegenerating = regeneratingId === message.id;
               const isReplying = replyToId === message.id;
+
+              const extracted = !isUser
+                ? extractReasoning(message.content)
+                : { reasoning: message.reasoning || null, response: message.content, isThinking: false };
+              const displayReasoning = message.reasoning || extracted.reasoning;
+              const displayContent = extracted.response || (displayReasoning ? '' : message.content);
               
               return (
                 <div
                   key={message.id}
+                  id={`message-${message.id}`}
                   className={`flex gap-3 animate-fade-in ${
                     isUser ? 'flex-row-reverse' : ''
                   } ${isReplying ? 'opacity-70' : ''}`}
@@ -892,7 +1181,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                               )}
                               
                               <button
-                                onClick={() => copyToClipboard(message.content, message.id)}
+                                onClick={() => copyToClipboard(displayContent || message.content, message.id)}
                                 className={`p-1 rounded transition-colors ${
                                   isUser 
                                     ? 'hover:bg-white/20 text-white/60 hover:text-white'
@@ -924,19 +1213,55 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                             </div>
                           </div>
 
-                          {renderMessageContent(message.content, isUser)}
+                          {/* Attachments preview on message */}
+                          {message.attachments && message.attachments.length > 0 && (
+                            <div className="mb-2">
+                              <FileAttachmentPreview attachments={message.attachments} readOnly={true} />
+                            </div>
+                          )}
+
+                          {/* Reasoning / Thinking Accordion */}
+                          {!isUser && displayReasoning && (
+                            <div className="mb-2">
+                              <ReasoningAccordion
+                                reasoning={displayReasoning}
+                                isStreaming={isLoading && index === messages.length - 1 && !displayContent}
+                                duration={message.reasoningDuration}
+                              />
+                            </div>
+                          )}
+
+                          {displayContent ? renderMessageContent(displayContent, isUser) : null}
 
                           <div
                             className={`
-                              text-[10px] mt-1.5
-                              ${isUser ? 'text-white/80 text-right' : 'text-gray-400'}
+                              text-[10px] mt-1.5 flex items-center justify-between
+                              ${isUser ? 'text-white/80 text-right justify-end' : 'text-gray-400'}
                             `}
                           >
-                            {formatTime(message.timestamp)}
+                            <span>{formatTime(message.timestamp)}</span>
                           </div>
+
+                          {!isUser && chatId && (
+                            <MessageReactions
+                              message={message}
+                              chatId={chatId}
+                              onFeedback={(feedback) => setFeedback(chatId, message.id, feedback)}
+                              onToggleStar={() => toggleStarMessage(chatId, message.id)}
+                              onAddReaction={(emoji) => addReaction(chatId, message.id, emoji)}
+                              onCopy={() => copyToClipboard(displayContent || message.content, message.id)}
+                            />
+                          )}
                         </>
                       )}
                     </div>
+
+                    {/* Dynamic Follow-up Suggestions on latest assistant message */}
+                    {!isUser && index === messages.length - 1 && !isLoading && (
+                      <div className="mt-2 pl-1">
+                        <PromptSuggestions onSelectPrompt={(p) => onSendMessage(p)} mode="follow_ups" />
+                      </div>
+                    )}
                   </div>
                 </div>
               );
@@ -1002,28 +1327,104 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
           </div>
         )}
 
-        <div className="max-w-4xl mx-auto px-4 py-4">
-          <form onSubmit={handleSubmit} className="flex gap-3">
+        <div className="max-w-4xl mx-auto px-4 py-3">
+          {/* Pending Attachments Preview */}
+          {pendingAttachments.length > 0 && (
+            <div className="mb-2 bg-white/90 backdrop-blur-md p-2 rounded-2xl border border-[#006633]/20 shadow-xs">
+              <FileAttachmentPreview attachments={pendingAttachments} onRemove={handleRemoveAttachment} />
+              {pendingAttachments.some(a => a.type === 'image') && !currentChat?.model?.includes('vision') && !currentChat?.model?.includes('llava') && (
+                <div className="text-[10px] text-amber-600 font-medium px-2 py-0.5">
+                  💡 Tip: Analyzing images works best with a vision model (e.g. llama3.2-vision, llava).
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Markdown Formatting Toolbar */}
+          <div className="mb-1 rounded-t-xl overflow-hidden border-t border-l border-r border-[#006633]/15">
+            <MarkdownToolbar onInsert={handleInsertMarkdown} disabled={isLoading} />
+          </div>
+
+          <form onSubmit={handleSubmit} className="flex gap-2 relative">
+            {/* Attach File Button */}
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isLoading}
+              className="p-3 bg-white hover:bg-[#006633]/10 border border-[#006633]/20 rounded-xl text-slate-500 hover:text-[#006633] transition-colors shadow-xs shrink-0 flex items-center justify-center disabled:opacity-50"
+              title="Attach images or documents"
+            >
+              <Paperclip size={18} />
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept="image/*,.txt,.md,.json,.js,.ts,.tsx,.jsx,.py,.html,.css,.csv,.pdf"
+              onChange={handleFileChange}
+              className="hidden"
+            />
+
             <div className="flex-1 relative">
+              {/* Slash Command Autocomplete Popover */}
+              {showSlashMenu && matchingSlashCommands.length > 0 && (
+                <div className="absolute bottom-full left-0 mb-2 w-full max-w-md bg-white rounded-2xl border border-[#006633]/20 shadow-2xl overflow-hidden z-40 animate-slide-up">
+                  <div className="px-3.5 py-2 bg-[#006633]/5 border-b border-[#006633]/10 text-[11px] font-semibold text-[#006633] flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <span>⚡ Slash Commands</span>
+                    </span>
+                    <span className="text-[10px] text-gray-400 font-normal">↑↓ to navigate · Enter to select</span>
+                  </div>
+                  <div className="max-h-60 overflow-y-auto p-1.5 space-y-1">
+                    {matchingSlashCommands.map((cmd, idx) => {
+                      const isSelected = idx === selectedSlashIndex;
+                      return (
+                        <button
+                          key={cmd.command}
+                          type="button"
+                          onClick={() => {
+                            setInput(cmd.command === '/clear' || cmd.command === '/help' ? cmd.command : cmd.command + ' ');
+                            setShowSlashMenu(false);
+                            inputRef.current?.focus();
+                          }}
+                          onMouseEnter={() => setSelectedSlashIndex(idx)}
+                          className={`w-full text-left px-3 py-2 rounded-xl flex items-center justify-between transition-colors ${
+                            isSelected
+                              ? 'bg-[#006633]/10 text-[#006633] font-medium'
+                              : 'hover:bg-gray-100/80 text-gray-700'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2.5">
+                            <span className="text-base">{cmd.icon}</span>
+                            <span className="font-mono text-xs font-semibold text-gray-900">{cmd.syntax}</span>
+                          </div>
+                          <span className="text-[11px] text-gray-500 truncate max-w-[170px]">{cmd.description}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               <input
                 ref={inputRef}
                 type="text"
                 value={input}
-                onChange={(e) => setInput(e.target.value)}
+                onChange={handleInputChange}
                 onKeyDown={handleKeyDown}
                 placeholder={
                   replyToId 
                     ? "Reply to selected message..." 
                     : isLoading 
                       ? `Waiting for ${currentChat?.model ? getModelDisplayName(currentChat.model) : 'AI'}...` 
-                      : "Type your message..."
+                      : "Type your message, / for commands, or drop files..."
                 }
                 disabled={isLoading}
                 className={`w-full px-4 py-3 bg-[#f5f5f0] border rounded-xl focus:ring-2 focus:ring-[#006633]/20 focus:border-[#006633] transition-all duration-200 text-gray-900 placeholder-[#006633]/40 disabled:opacity-50 disabled:cursor-not-allowed ${
                   replyToId ? 'border-[#006633] border-2' : 'border-[#006633]/20'
                 }`}
               />
-              {!isLoading && input && (
+              {!isLoading && (input || pendingAttachments.length > 0) && (
                 <button
                   type="submit"
                   className="absolute right-1.5 top-1/2 -translate-y-1/2 p-2 text-[#006633] hover:text-[#004422] hover:bg-[#006633]/10 rounded-lg transition-colors"
@@ -1050,8 +1451,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
             </div>
             <button
               type="submit"
-              disabled={isLoading || !input.trim()}
-              className={`px-6 py-3 bg-[#006633] hover:bg-[#004422] text-white font-medium rounded-xl transition-all duration-200 shadow-premium-sm hover:shadow-premium disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-premium-sm disabled:hover:bg-[#006633] ${
+              disabled={isLoading || (!input.trim() && pendingAttachments.length === 0)}
+              className={`px-5 py-3 bg-[#006633] hover:bg-[#004422] text-white font-medium rounded-xl transition-all duration-200 shadow-premium-sm hover:shadow-premium disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-premium-sm disabled:hover:bg-[#006633] shrink-0 ${
                 replyToId ? 'ring-2 ring-[#006633]/30' : ''
               }`}
             >

@@ -1,3 +1,16 @@
+export type ResponseTone = 'default' | 'professional' | 'casual' | 'academic' | 'technical' | 'customs';
+export type ResponseVerbosity = 'concise' | 'balanced' | 'detailed';
+
+export interface Attachment {
+  id: string;
+  name: string;
+  type: 'image' | 'text' | 'file';
+  mimeType: string;
+  size: number;
+  data: string; // Base64 data for images or string content for text files
+  previewUrl?: string;
+}
+
 export interface Message {
   id: string;
   role: 'user' | 'assistant';
@@ -5,6 +18,17 @@ export interface Message {
   timestamp: Date;
   edited?: boolean;
   replyToId?: string;
+  starred?: boolean;
+  userFeedback?: 'like' | 'dislike' | null;
+  reactions?: Record<string, number>;
+  userReactions?: string[];
+  reasoning?: string;
+  reasoningDuration?: number;
+  attachments?: Attachment[];
+  images?: string[]; // Array of base64 strings for Ollama vision models
+  followUpQuestions?: string[];
+  parentId?: string;
+  childrenIds?: string[];
 }
 
 export interface Chat {
@@ -15,6 +39,28 @@ export interface Chat {
   model: string;
   createdAt: Date;
   updatedAt: Date;
+  systemPrompt?: string;
+  tone?: ResponseTone;
+  verbosity?: ResponseVerbosity;
+  folderId?: string;
+  archived?: boolean;
+  tags?: string[];
+}
+
+export interface Folder {
+  id: string;
+  name: string;
+  color?: string;
+  createdAt: Date;
+}
+
+export interface PromptTemplate {
+  id: string;
+  title: string;
+  prompt: string;
+  category: 'Coding' | 'Writing' | 'Analysis' | 'Customs' | 'General';
+  description?: string;
+  icon?: string;
 }
 
 export interface OllamaResponse {
@@ -23,6 +69,7 @@ export interface OllamaResponse {
   message: {
     role: string;
     content: string;
+    images?: string[];
   };
   done: boolean;
   total_duration?: number;
