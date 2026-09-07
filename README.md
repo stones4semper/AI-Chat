@@ -1,99 +1,95 @@
- - [ ] Vite
 
-- [ ] React
 
-- [ ] TypeScript
+- Reply to specific messages creates a thread
+- View conversation branches/tree view
+- Switch between different response paths
+- Visual thread indicators
 
-- [ ] Tailwind CSS
+- Search through all conversations
+- Highlight matching text
+- Filter messages by date, model, or content
+- Advanced search with regex support
 
-- [ ] Premium responsive UI
+- Star important messages
+- Save specific responses for later
+- Quick access to bookmarked content
+- Organize by categories/tags
 
-- [ ] Dark theme
+- Like/dislike responses
+- Emoji reactions (👍, 👎, ❤️, etc.)
+- Feedback collection for model improvement
+- Reaction counts display
 
-- [ ] Light theme
+- Choose response style: Professional, Casual, Academic, etc.
+- Adjust verbosity: Concise, Detailed, Balanced
+- Custom tone presets
+- Auto-detect user preference
 
-- [ ] Ollama connection
+- Compare responses from different models
+- Side-by-side model comparison
+- Combine outputs from multiple models
+- Auto-select best model for task type
 
-- [ ] Ollama connection status
+- Smart prompt suggestions
+- Context-aware follow-up questions
+- Related topic suggestions
+- Prompt templates library
 
-- [ ] Configurable Ollama URL
+- Adjustable context window
+- Semantic compression for long conversations
+- Key information extraction
+- Automatic summarization of long chats
 
-- [ ] Dynamic model discovery
+- Chat folders/groups
+- Archive old conversations
+- Bulk delete/move operations
+- Tags and categories
+- Smart auto-organization
 
-- [ ] Model search
+- Markdown toolbar
+- Image upload/embedding
+- File attachments
+- Code editor mode
+- Emoji picker
 
-- [ ] Model selector
+- Chat history on one side
+- Document/viewer on the other
+- Drag-to-resize panels
+- Multi-tab conversations
 
-- [ ] Model switching
+- Full keyboard navigation
+- Custom shortcut mapping
+- Quick actions (new chat, search, etc.)
+- Power user shortcuts
 
-- [ ] Model per conversation
+- AI remembers important facts
+- User preference learning
+- Cross-conversation memory
+- Update/delete stored memories
+- Memory management interface
 
-- [ ] Model indicator on responses
+- Built-in fact verification
+- Source citations
+- Confidence scoring
+- Uncertainty indication
+- Information accuracy rating
 
-- [ ] Model unavailable handling
+- Show reasoning process
+- Chain-of-thought display
+- Expandable reasoning steps
+- Debug mode for developers
 
-- [ ] Refresh models
+- Learn from interactions
+- Improve over time
+- Personalized suggestions
+- Adaptive responses
 
-- [ ] New chat
+- AI takes on specific personas
+- Role-specific responses
+- Scenario simulation
+- Training exercises
 
-- [ ] Conversation history
-
-- [ ] Pinned conversations
-
-- [ ] Search
-
-- [ ] Rename
-
-- [ ] Archive
-
-- [ ] Duplicate
-
-- [ ] Delete
-
-- [ ] Local persistence
-
-- [ ] Streaming responses
-
-- [ ] Stop generation
-
-- [ ] Markdown rendering
-
-- [ ] Syntax highlighting
-
-- [ ] Code copying
-
-- [ ] Message copying
-
-- [ ] Message editing
-
-- [ ] Regenerate
-
-- [ ] Smart scrolling
-
-- [ ] Jump to latest
-
-- [ ] Settings
-
-- [ ] System prompt
-
-- [ ] Supported model parameters
-
-- [ ] Export
-
-- [ ] Import
-
-- [ ] Keyboard shortcuts
-
-- [ ] Toast notifications
-
-- [ ] Loading states
-
-- [ ] Empty states
-
-- [ ] Error states
-
-- [ ] Mobile drawer
-
-- [ ] Accessibility
-
-- [ ] Strong TypeScript architecture
+- Smart input completion
+- Context-aware suggestions
+- Command autocomplete
+- Quick actions
