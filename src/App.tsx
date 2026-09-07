@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Sparkles, AlertCircle, Scale, Shield, Loader2 } from 'lucide-react';
 import Sidebar from '@/components/Sidebar';
 import ChatInterface from '@/components/ChatInterface';
@@ -13,6 +13,7 @@ import type { Message } from '@/types';
 const ChatApp: React.FC = () => {
   const [isMobileOpen, setIsMobileOpen] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
+  const isProcessing = useRef(false);
   
   const { 
     chats,
@@ -23,7 +24,6 @@ const ChatApp: React.FC = () => {
     changeModel,
     setLoading,
     isLoading,
-    deleteMessage,
     getMessages,
     truncateMessages,
     createNewChat
@@ -51,7 +51,6 @@ const ChatApp: React.FC = () => {
     
     initializeApp();
     
-    // Check connection periodically
     const interval = setInterval(() => {
       checkConnection();
     }, 30000);
@@ -79,203 +78,205 @@ const ChatApp: React.FC = () => {
     }
   }, [currentChatId, changeModel]);
 
-  const handleSendMessage = useCallback(async (content: string, editMessageId?: string) => {
+  const handleSendMessage = useCallback(async (
+    content: string, 
+    editMessageId?: string,
+    replyToId?: string
+  ) => {
+    // Prevent double submission
+    if (isProcessing.current) {
+      console.log('⏳ Already processing a message, please wait...');
+      return;
+    }
+
     if (!currentChatId || !currentChat) {
       console.warn('⚠️ No active chat to send message');
       return;
     }
 
-    console.log(`📤 Sending message: "${content.slice(0, 50)}..."`);
-
-    // If editing, find the message and its position
-    let messageIndex = -1;
-    let existingMessages = [...currentChat.messages];
-    
-    if (editMessageId) {
-      messageIndex = existingMessages.findIndex(m => m.id === editMessageId);
-      if (messageIndex === -1) {
-        console.warn('⚠️ Message not found for editing');
-        return;
-      }
-      
-      // Remove all messages after the edited message (including the AI response)
-      const newMessages = existingMessages.slice(0, messageIndex);
-      
-      // Update the user message content
-      const updatedUserMessage: Message = {
-        ...existingMessages[messageIndex],
-        content: content,
-        edited: true,
-        timestamp: new Date()
-      };
-      
-      // Replace the user message
-      newMessages.push(updatedUserMessage);
-      
-      // Truncate messages to this point
-      truncateMessages(currentChatId, newMessages.length);
-      
-      // Add the updated user message
-      addMessage(currentChatId, updatedUserMessage);
-      
-      // Now send the message to get a new response
-      console.log('📝 Edited message, regenerating response...');
-    } else {
-      // Regular new message
-      const userMessage: Message = {
-        id: Date.now().toString(),
-        role: 'user',
-        content,
-        timestamp: new Date()
-      };
-
-      // Add user message
-      addMessage(currentChatId, userMessage);
+    if (!content || content.trim() === '') {
+      console.warn('⚠️ Empty message');
+      return;
     }
 
+    console.log(`📤 Sending message: "${content.slice(0, 50)}..."`);
+    isProcessing.current = true;
+
     try {
-      // Get the current messages (including the new user message)
+      // Handle edit mode
+      if (editMessageId) {
+        const messageIndex = currentChat.messages.findIndex(m => m.id === editMessageId);
+        if (messageIndex === -1) {
+          isProcessing.current = false;
+          return;
+        }
+        
+        // Truncate messages after the edited message
+        truncateMessages(currentChatId, messageIndex);
+        
+        // Update the user message
+        const updatedUserMessage: Message = {
+          ...currentChat.messages[messageIndex],
+          content: content,
+          edited: true,
+          timestamp: new Date()
+        };
+        addMessage(currentChatId, updatedUserMessage);
+      } else {
+        // Regular new message with optional reply
+        const userMessage: Message = {
+          id: `user_${Date.now()}`,
+          role: 'user',
+          content: content,
+          timestamp: new Date(),
+          replyToId: replyToId || undefined
+        };
+        addMessage(currentChatId, userMessage);
+      }
+
+      // Get current messages after adding user message
       const currentMessages = getMessages(currentChatId);
-      const lastUserMessage = currentMessages[currentMessages.length - 1];
       
-      if (!lastUserMessage || lastUserMessage.role !== 'user') {
-        console.warn('⚠️ No user message found');
+      // Find the last user message
+      const lastUserMessage = currentMessages.filter(m => m.role === 'user').pop();
+      if (!lastUserMessage) {
+        console.error('❌ No user message found to send');
+        isProcessing.current = false;
         return;
       }
 
-      // Stream AI response with current model
       const model = currentChat.model || 'qwen:latest';
-      console.log(`🤖 Generating response with model: ${model}`);
       
-      const response = await sendMessage(
+      // Create a placeholder for the assistant message
+      const assistantMessageId = `assistant_${Date.now()}`;
+      const assistantMessage: Message = {
+        id: assistantMessageId,
+        role: 'assistant',
+        content: '',
+        timestamp: new Date()
+      };
+      
+      // Add empty assistant message first
+      addMessage(currentChatId, assistantMessage);
+
+      console.log(`🤖 Generating response with model: ${model}`);
+      console.log(`📝 Sending message content: "${lastUserMessage.content}"`);
+      
+      let fullResponse = '';
+
+      // Send the message and get streaming response
+      await sendMessage(
         currentMessages,
         model,
         (chunk) => {
-          // Check if we already have an assistant message
-          const messages = getMessages(currentChatId);
-          const lastMessage = messages[messages.length - 1];
+          // This is the streaming callback
+          fullResponse += chunk;
           
-          if (lastMessage && lastMessage.role === 'assistant') {
-            // Update existing assistant message
-            updateMessage(currentChatId, lastMessage.id, lastMessage.content + chunk);
-          } else {
-            // Create new assistant message
-            const assistantMessage: Message = {
-              id: (Date.now() + 1).toString(),
-              role: 'assistant',
-              content: chunk,
-              timestamp: new Date()
-            };
-            addMessage(currentChatId, assistantMessage);
-          }
+          // Update the assistant message with the accumulated content
+          updateMessage(currentChatId, assistantMessageId, fullResponse);
         }
       );
-
-      // If no streaming, add full response
-      if (response) {
-        const messages = getMessages(currentChatId);
-        const lastMessage = messages[messages.length - 1];
-        if (lastMessage?.role !== 'assistant') {
-          const assistantMessage: Message = {
-            id: (Date.now() + 1).toString(),
-            role: 'assistant',
-            content: response,
-            timestamp: new Date()
-          };
-          addMessage(currentChatId, assistantMessage);
-        }
-      }
       
       console.log('✅ Message sent successfully');
+      console.log(`📝 Full response length: ${fullResponse.length} characters`);
+      
     } catch (error) {
       console.error('❌ Error sending message:', error);
-      // Show error message
-      const errorMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        role: 'assistant',
-        content: `❌ Error: ${error instanceof Error ? error.message : 'Failed to get response'}`,
-        timestamp: new Date()
-      };
-      addMessage(currentChatId, errorMessage);
+      const errorMsg = error instanceof Error ? error.message : 'Failed to get response';
+      
+      // Find the last assistant message and update with error
+      const messages = getMessages(currentChatId);
+      const lastMessage = messages[messages.length - 1];
+      if (lastMessage && lastMessage.role === 'assistant' && lastMessage.content === '') {
+        updateMessage(currentChatId, lastMessage.id, `❌ Error: ${errorMsg}`);
+      } else {
+        // Add error message
+        const errorMessage: Message = {
+          id: `error_${Date.now()}`,
+          role: 'assistant',
+          content: `❌ Error: ${errorMsg}`,
+          timestamp: new Date()
+        };
+        addMessage(currentChatId, errorMessage);
+      }
+    } finally {
+      isProcessing.current = false;
     }
   }, [currentChatId, currentChat, addMessage, updateMessage, getMessages, sendMessage, truncateMessages]);
 
   const handleRegenerateMessage = useCallback(async (messageId: string) => {
+    if (isProcessing.current) {
+      console.log('⏳ Already processing a message, please wait...');
+      return;
+    }
+
     if (!currentChatId || !currentChat) {
       console.warn('⚠️ No active chat to regenerate');
       return;
     }
 
     console.log(`🔄 Regenerating message: ${messageId}`);
+    isProcessing.current = true;
 
-    // Find the assistant message
-    const assistantIndex = currentChat.messages.findIndex(m => m.id === messageId);
-    if (assistantIndex === -1) {
-      console.warn('⚠️ Message not found for regeneration');
-      return;
-    }
-
-    // Find the previous user message
-    const userMessage = currentChat.messages[assistantIndex - 1];
-    if (!userMessage || userMessage.role !== 'user') {
-      console.warn('⚠️ No user message found before assistant message');
-      return;
-    }
-
-    // Remove the assistant message and any messages after it
-    truncateMessages(currentChatId, assistantIndex);
-
-    // Regenerate
     try {
+      // Find the assistant message
+      const assistantIndex = currentChat.messages.findIndex(m => m.id === messageId);
+      if (assistantIndex === -1) {
+        isProcessing.current = false;
+        return;
+      }
+
+      // Find the previous user message
+      const userMessage = currentChat.messages[assistantIndex - 1];
+      if (!userMessage || userMessage.role !== 'user') {
+        console.error('❌ No user message found before assistant message');
+        isProcessing.current = false;
+        return;
+      }
+
+      // Remove the assistant message and any messages after it
+      truncateMessages(currentChatId, assistantIndex);
+
+      // Create new assistant message placeholder
+      const newAssistantId = `assistant_${Date.now()}`;
+      const newAssistant: Message = {
+        id: newAssistantId,
+        role: 'assistant',
+        content: '',
+        timestamp: new Date()
+      };
+      addMessage(currentChatId, newAssistant);
+
       const currentMessages = getMessages(currentChatId);
       const model = currentChat.model || 'qwen:latest';
       console.log(`🤖 Regenerating response with model: ${model}`);
       
-      const response = await sendMessage(
+      let fullResponse = '';
+
+      await sendMessage(
         currentMessages,
         model,
         (chunk) => {
-          const messages = getMessages(currentChatId);
-          const lastMessage = messages[messages.length - 1];
-          
-          if (lastMessage && lastMessage.role === 'assistant') {
-            updateMessage(currentChatId, lastMessage.id, lastMessage.content + chunk);
-          } else {
-            const assistantMessage: Message = {
-              id: (Date.now() + 1).toString(),
-              role: 'assistant',
-              content: chunk,
-              timestamp: new Date()
-            };
-            addMessage(currentChatId, assistantMessage);
-          }
+          fullResponse += chunk;
+          updateMessage(currentChatId, newAssistantId, fullResponse);
         }
       );
-
-      if (response) {
-        const messages = getMessages(currentChatId);
-        const lastMessage = messages[messages.length - 1];
-        if (lastMessage?.role !== 'assistant') {
-          const assistantMessage: Message = {
-            id: (Date.now() + 1).toString(),
-            role: 'assistant',
-            content: response,
-            timestamp: new Date()
-          };
-          addMessage(currentChatId, assistantMessage);
-        }
-      }
       
       console.log('✅ Message regenerated successfully');
     } catch (error) {
       console.error('❌ Error regenerating message:', error);
+      const errorMsg = error instanceof Error ? error.message : 'Failed to regenerate';
+      
+      // Add error message
       const errorMessage: Message = {
-        id: (Date.now() + 1).toString(),
+        id: `error_${Date.now()}`,
         role: 'assistant',
-        content: `❌ Error: ${error instanceof Error ? error.message : 'Failed to regenerate response'}`,
+        content: `❌ Error: ${errorMsg}`,
         timestamp: new Date()
       };
       addMessage(currentChatId, errorMessage);
+    } finally {
+      isProcessing.current = false;
     }
   }, [currentChatId, currentChat, addMessage, updateMessage, getMessages, sendMessage, truncateMessages]);
 
@@ -353,7 +354,7 @@ const ChatApp: React.FC = () => {
               messages={currentChat.messages}
               onSendMessage={handleSendMessage}
               onRegenerateMessage={handleRegenerateMessage}
-              isLoading={isLoading}
+              isLoading={isProcessing.current || isLoading}
               chatId={currentChatId}
             />
           ) : (
@@ -408,7 +409,6 @@ const App: React.FC = () => {
   const [isAppLoading, setIsAppLoading] = useState(true);
 
   useEffect(() => {
-    // Simulate app loading
     const timer = setTimeout(() => {
       setIsAppLoading(false);
     }, 1500);

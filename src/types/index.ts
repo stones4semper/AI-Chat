@@ -3,8 +3,8 @@ export interface Message {
   role: 'user' | 'assistant';
   content: string;
   timestamp: Date;
-  edited?: boolean; // Track if message was edited
-  versions?: string[]; // For version history (optional)
+  edited?: boolean;
+  replyToId?: string; // ID of the message being replied to
 }
 
 export interface Chat {

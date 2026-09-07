@@ -7,57 +7,36 @@ export const useOllama = () => {
   const [error, setError] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState<boolean | null>(null);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
-  const [isInitialized, setIsInitialized] = useState(false);
 
   const checkConnection = useCallback(async () => {
     try {
-      console.log('🔍 Checking Ollama connection...');
       const connected = await ollamaService.checkConnection();
       setIsConnected(connected);
       
       if (connected) {
-        // Get available models
         const models = await ollamaService.getModels();
         const modelNames = models.map(m => m.name);
         setAvailableModels(modelNames);
-        console.log('📦 Available models:', modelNames);
-        
-        if (modelNames.length === 0) {
-          setError('No models found. Please pull a model: ollama pull qwen:latest');
-        } else {
+        if (modelNames.length > 0) {
           setError(null);
+        } else {
+          setError('No models found. Pull one with: ollama pull qwen:latest');
         }
       } else {
-        setError('Cannot connect to Ollama. Please make sure Ollama is running.');
+        setError('Cannot connect to Ollama. Make sure it is running.');
       }
       return connected;
     } catch (err) {
-      console.error('❌ Connection check failed:', err);
+      console.error('Connection check failed:', err);
       setIsConnected(false);
-      setError('Failed to connect to Ollama. Please check if Ollama is running.');
+      setError('Failed to connect to Ollama.');
       return false;
     }
   }, []);
 
-  // Auto-check connection on mount
   useEffect(() => {
-    if (!isInitialized) {
-      checkConnection();
-      setIsInitialized(true);
-    }
-  }, [checkConnection, isInitialized]);
-
-  // Retry connection every 30 seconds
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (isConnected === false || isConnected === null) {
-        console.log('🔄 Retrying connection...');
-        checkConnection();
-      }
-    }, 30000);
-
-    return () => clearInterval(interval);
-  }, [checkConnection, isConnected]);
+    checkConnection();
+  }, [checkConnection]);
 
   const sendMessage = useCallback(async (
     messages: Message[],
@@ -68,56 +47,49 @@ export const useOllama = () => {
     setError(null);
 
     try {
-      const lastMessage = messages[messages.length - 1];
+      // Find the last user message
+      const userMessages = messages.filter(m => m.role === 'user');
+      const lastUserMessage = userMessages[userMessages.length - 1];
       
-      if (!lastMessage) {
-        throw new Error('No message to send');
+      if (!lastUserMessage) {
+        throw new Error('No user message found');
       }
 
-      // Check if model exists, if not try to pull it
-      if (!availableModels.includes(model)) {
-        console.log(`📥 Model "${model}" not found, attempting to pull...`);
-        try {
-          await ollamaService.pullModel(model);
-          // Refresh models list
-          const models = await ollamaService.getModels();
-          setAvailableModels(models.map(m => m.name));
-        } catch (pullError) {
-          console.error('Failed to pull model:', pullError);
-          // Continue anyway, maybe it will work
-        }
+      const prompt = lastUserMessage.content;
+      
+      if (!prompt || prompt.trim() === '') {
+        throw new Error('Empty message');
       }
 
-      console.log(`🔄 Sending message to model: ${model}`);
-      
+      console.log(`Sending to ${model}: "${prompt.slice(0, 50)}..."`);
+
+      let fullResponse = '';
+
       if (onChunk) {
-        let fullResponse = '';
+        // Streaming mode
         await ollamaService.streamResponse(
-          lastMessage.content,
+          prompt,
           model,
           (chunk) => {
             fullResponse += chunk;
             onChunk(chunk);
           }
         );
-        setIsLoading(false);
-        return fullResponse;
       } else {
-        const response = await ollamaService.generateResponse(
-          lastMessage.content,
-          model
-        );
-        setIsLoading(false);
-        return response;
+        // Non-streaming mode
+        fullResponse = await ollamaService.generateResponse(prompt, model);
       }
+      
+      setIsLoading(false);
+      return fullResponse;
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'An error occurred';
-      console.error('❌ Error in sendMessage:', errorMessage);
+      console.error('Error in sendMessage:', errorMessage);
       setError(errorMessage);
       setIsLoading(false);
       throw err;
     }
-  }, [availableModels]);
+  }, []);
 
   const refreshModels = useCallback(async () => {
     try {

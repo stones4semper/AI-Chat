@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { 
   Send, User, Bot, Copy, Check, RefreshCw, Pin, PinOff, Cpu,
   Edit2, X, ChevronDown, ChevronUp, Code, Terminal, FileText,
-  ArrowDown, History, RotateCcw, Loader2
+  ArrowDown, History, RotateCcw, Loader2, Reply, Quote
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -13,7 +13,7 @@ import remarkGfm from 'remark-gfm';
 
 interface ChatInterfaceProps {
   messages: Message[];
-  onSendMessage: (content: string, messageId?: string) => Promise<void>;
+  onSendMessage: (content: string, messageId?: string, replyToId?: string) => Promise<void>;
   onRegenerateMessage: (messageId: string) => Promise<void>;
   isLoading: boolean;
   chatId: string | null;
@@ -26,7 +26,7 @@ interface CodeBlockProps {
   copiedCode: string | null;
 }
 
-// Code Block Component with syntax highlighting and code copying
+// Code Block Component
 const CodeBlock: React.FC<CodeBlockProps> = ({ language, value, onCopy, copiedCode }) => {
   const [isHovered, setIsHovered] = useState(false);
   const isCopied = copiedCode === value;
@@ -37,7 +37,6 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ language, value, onCopy, copiedCo
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
-      {/* Language Badge */}
       <div className="flex items-center justify-between bg-[#1e1e1e] text-gray-300 text-xs px-3 py-1.5 rounded-t-lg border-b border-gray-700">
         <div className="flex items-center gap-2">
           <Terminal size={12} />
@@ -103,6 +102,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [newMessagesCount, setNewMessagesCount] = useState(0);
   const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
+  const [replyToId, setReplyToId] = useState<string | null>(null);
+  const [replyToContent, setReplyToContent] = useState<string>('');
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -165,7 +166,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     const container = messagesContainerRef.current;
     if (container) {
       container.addEventListener('scroll', handleScroll);
-      // Initial check
       handleScroll();
       return () => container.removeEventListener('scroll', handleScroll);
     }
@@ -192,7 +192,15 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
     const message = input.trim();
     setInput('');
-    await onSendMessage(message);
+    
+    // If replying to a message, include the reply context
+    if (replyToId) {
+      await onSendMessage(message, undefined, replyToId);
+      setReplyToId(null);
+      setReplyToContent('');
+    } else {
+      await onSendMessage(message);
+    }
     
     // Reset scroll state
     isUserScrolling.current = false;
@@ -244,22 +252,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     setEditingMessageId(null);
     setEditingContent('');
     
-    // Find the message and its index
-    const messageIndex = messages.findIndex(m => m.id === messageId);
-    if (messageIndex === -1) return;
-    
-    // Check if there's an assistant message after this user message
-    const hasAssistantResponse = messageIndex < messages.length - 1 && 
-                                 messages[messageIndex + 1]?.role === 'assistant';
-    
-    if (hasAssistantResponse) {
-      // Remove the assistant response and any messages after it
-      // Then send the edited message to get a new response
-      await onSendMessage(newContent, messageId);
-    } else {
-      // Just update the message content if no response to regenerate
-      // This would need to be handled through the context
-    }
+    await onSendMessage(newContent, messageId);
   };
 
   const handleCancelEdit = () => {
@@ -271,6 +264,17 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     setRegeneratingId(messageId);
     await onRegenerateMessage(messageId);
     setRegeneratingId(null);
+  };
+
+  const handleReply = (message: Message) => {
+    setReplyToId(message.id);
+    setReplyToContent(message.content);
+    inputRef.current?.focus();
+  };
+
+  const handleCancelReply = () => {
+    setReplyToId(null);
+    setReplyToContent('');
   };
 
   const handleJumpToLatest = () => {
@@ -297,7 +301,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     if (name.includes('mistral')) return 'Mistral';
     if (name.includes('gemma')) return 'Gemma';
     if (name.includes('phi')) return 'Phi';
-    if (name.includes('neural')) return 'Neural';
     if (name.includes('codellama')) return 'CodeLlama';
     return modelName.split(':')[0].charAt(0).toUpperCase() + 
            modelName.split(':')[0].slice(1);
@@ -314,6 +317,14 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     if (name.includes('phi')) return 'text-indigo-600 bg-indigo-50 border-indigo-200';
     if (name.includes('codellama')) return 'text-cyan-600 bg-cyan-50 border-cyan-200';
     return 'text-gray-600 bg-gray-50 border-gray-200';
+  };
+
+  // Get reply preview
+  const getReplyPreview = (messageId: string) => {
+    const message = messages.find(m => m.id === messageId);
+    if (!message) return '';
+    const preview = message.content.slice(0, 60) + (message.content.length > 60 ? '...' : '');
+    return `Replying to: "${preview}"`;
   };
 
   return (
@@ -371,17 +382,18 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
               )}
             </div>
           ) : (
-            messages.map((message) => {
+            messages.map((message, index) => {
               const isUser = message.role === 'user';
               const isEditing = editingMessageId === message.id;
               const isRegenerating = regeneratingId === message.id;
+              const isReplying = replyToId === message.id;
               
               return (
                 <div
                   key={message.id}
                   className={`flex gap-3 animate-fade-in ${
                     isUser ? 'flex-row-reverse' : ''
-                  }`}
+                  } ${isReplying ? 'opacity-70' : ''}`}
                 >
                   {/* Avatar */}
                   <div
@@ -414,6 +426,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                           : 'bg-white border border-[#006633]/10 text-gray-900 shadow-premium-sm'
                         }
                         ${isEditing ? 'min-w-[300px]' : ''}
+                        ${isReplying ? 'border-2 border-[#006633]' : ''}
+                        group
                       `}
                     >
                       {/* Edit Mode */}
@@ -450,6 +464,14 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                         </div>
                       ) : (
                         <>
+                          {/* Reply Indicator */}
+                          {message.replyToId && (
+                            <div className="flex items-center gap-1.5 mb-1.5 text-[10px] opacity-60 border-l-2 border-[#006633] pl-2">
+                              <Quote size={10} />
+                              <span>Replying to {message.replyToId === messages[index - 1]?.id ? 'previous' : 'a'} message</span>
+                            </div>
+                          )}
+
                           {/* Message Header with Actions */}
                           <div className="flex items-center justify-between gap-2 mb-1">
                             <div className="flex items-center gap-2">
@@ -460,7 +482,24 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                                 <span className="text-[8px] opacity-50">(edited)</span>
                               )}
                             </div>
+                            
+                            {/* Action Buttons - Visible on Hover */}
                             <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                              {/* Reply button */}
+                              {!isUser && (
+                                <button
+                                  onClick={() => handleReply(message)}
+                                  className={`p-1 rounded transition-colors ${
+                                    isUser 
+                                      ? 'hover:bg-white/20 text-white/60 hover:text-white'
+                                      : 'hover:bg-gray-100 text-gray-400 hover:text-gray-600'
+                                  }`}
+                                  title="Reply to this message"
+                                >
+                                  <Reply size={12} />
+                                </button>
+                              )}
+                              
                               {/* Edit button for user messages */}
                               {isUser && (
                                 <button
@@ -475,6 +514,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                                   <Edit2 size={12} />
                                 </button>
                               )}
+                              
                               {/* Copy button */}
                               <button
                                 onClick={() => copyToClipboard(message.content, message.id)}
@@ -491,6 +531,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                                   <Copy size={12} />
                                 )}
                               </button>
+                              
                               {/* Regenerate button for assistant messages */}
                               {!isUser && (
                                 <button
@@ -550,7 +591,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                                     </code>
                                   );
                                 },
-                                // Custom table styling
                                 table: ({ children }) => (
                                   <div className="overflow-x-auto my-2">
                                     <table className="min-w-full divide-y divide-gray-200 border border-gray-200 rounded-lg">
@@ -558,7 +598,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                                     </table>
                                   </div>
                                 ),
-                                // Custom link styling
                                 a: ({ href, children }) => (
                                   <a 
                                     href={href} 
@@ -632,6 +671,27 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
       {/* Input Area */}
       <div className="border-t border-[#006633]/10 bg-white/80 backdrop-blur-sm flex-shrink-0">
+        {/* Reply Indicator */}
+        {replyToId && (
+          <div className="max-w-4xl mx-auto px-4 pt-3">
+            <div className="flex items-center justify-between bg-[#006633]/5 border border-[#006633]/20 rounded-xl px-3 py-2">
+              <div className="flex items-center gap-2 text-xs text-[#006633]">
+                <Reply size={14} />
+                <span className="font-medium">Replying to:</span>
+                <span className="text-[#006633]/70 truncate max-w-md">
+                  {getReplyPreview(replyToId)}
+                </span>
+              </div>
+              <button
+                onClick={handleCancelReply}
+                className="p-1 hover:bg-[#006633]/10 rounded-lg transition-colors"
+              >
+                <X size={14} className="text-[#006633]/60" />
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="max-w-4xl mx-auto px-4 py-4">
           <form onSubmit={handleSubmit} className="flex gap-3">
             <div className="flex-1 relative">
@@ -642,12 +702,16 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
                 placeholder={
-                  isLoading 
-                    ? `Waiting for ${currentChat?.model ? getModelDisplayName(currentChat.model) : 'AI'}...` 
-                    : "Type your message..."
+                  replyToId 
+                    ? "Reply to selected message..." 
+                    : isLoading 
+                      ? `Waiting for ${currentChat?.model ? getModelDisplayName(currentChat.model) : 'AI'}...` 
+                      : "Type your message..."
                 }
                 disabled={isLoading}
-                className="w-full px-4 py-3 bg-[#f5f5f0] border border-[#006633]/20 rounded-xl focus:ring-2 focus:ring-[#006633]/20 focus:border-[#006633] transition-all duration-200 text-gray-900 placeholder-[#006633]/40 disabled:opacity-50 disabled:cursor-not-allowed"
+                className={`w-full px-4 py-3 bg-[#f5f5f0] border rounded-xl focus:ring-2 focus:ring-[#006633]/20 focus:border-[#006633] transition-all duration-200 text-gray-900 placeholder-[#006633]/40 disabled:opacity-50 disabled:cursor-not-allowed ${
+                  replyToId ? 'border-[#006633] border-2' : 'border-[#006633]/20'
+                }`}
               />
               {!isLoading && input && (
                 <button
@@ -666,21 +730,31 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
             <button
               type="submit"
               disabled={isLoading || !input.trim()}
-              className="px-6 py-3 bg-[#006633] hover:bg-[#004422] text-white font-medium rounded-xl transition-all duration-200 shadow-premium-sm hover:shadow-premium disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-premium-sm disabled:hover:bg-[#006633]"
+              className={`px-6 py-3 bg-[#006633] hover:bg-[#004422] text-white font-medium rounded-xl transition-all duration-200 shadow-premium-sm hover:shadow-premium disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-premium-sm disabled:hover:bg-[#006633] ${
+                replyToId ? 'ring-2 ring-[#006633]/30' : ''
+              }`}
             >
-              {isLoading ? 'Sending...' : 'Send'}
+              {isLoading ? 'Sending...' : replyToId ? 'Reply' : 'Send'}
             </button>
           </form>
           <div className="mt-2 flex items-center justify-between">
             <span className="text-xs text-[#006633]/40">
               Press Enter to send · Shift + Enter for new line
             </span>
-            {currentChat?.model && (
-              <span className="text-[10px] text-[#006633]/30 flex items-center gap-1">
-                <Cpu size={10} />
-                {getModelDisplayName(currentChat.model)}
-              </span>
-            )}
+            <div className="flex items-center gap-3">
+              {replyToId && (
+                <span className="text-[10px] text-[#006633]/50 flex items-center gap-1">
+                  <Reply size={10} />
+                  Reply mode
+                </span>
+              )}
+              {currentChat?.model && (
+                <span className="text-[10px] text-[#006633]/30 flex items-center gap-1">
+                  <Cpu size={10} />
+                  {getModelDisplayName(currentChat.model)}
+                </span>
+              )}
+            </div>
           </div>
         </div>
       </div>
