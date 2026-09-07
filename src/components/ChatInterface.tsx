@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { 
   Send, User, Copy, Check, RefreshCw, Pin, PinOff, Cpu,
-  Edit2, X, Terminal, FileText,
+  Edit2, X, Terminal, FileText, Code,
   ArrowDown, RotateCcw, Loader2, Reply, Quote, Eye, EyeOff,
   CheckCheck, Square
 } from 'lucide-react';
@@ -22,109 +22,365 @@ interface ChatInterfaceProps {
   chatId: string | null;
 }
 
-// Detect if content contains HTML code
-const detectHtml = (content: string): { isHtml: boolean; htmlContent: string } => {
-  const htmlPattern = /<!DOCTYPE\s+html|<html[\s>]|<\w+[^>]*>[\s\S]*<\/\w+>/i;
-  const match = content.match(htmlPattern);
-  
-  if (match) {
-    const startIndex = content.indexOf(match[0]);
-    let endIndex = content.lastIndexOf('</html>');
-    if (endIndex === -1) {
-      endIndex = content.lastIndexOf('</body>');
+// Detect if code is CLI / Shell command
+const isShellCommand = (codeText: string, lang?: string): boolean => {
+  if (lang) {
+    const l = lang.toLowerCase().trim();
+    if (['bash', 'sh', 'shell', 'zsh', 'terminal', 'console', 'cmd', 'batch', 'bat', 'powershell', 'ps1'].includes(l)) {
+      return true;
     }
-    if (endIndex === -1) {
-      endIndex = content.length;
-    } else {
-      endIndex += 7;
-    }
-    
-    const htmlContent = content.substring(startIndex, endIndex).trim();
-    return { isHtml: true, htmlContent };
   }
-  
-  return { isHtml: false, htmlContent: '' };
+  const trimmed = codeText.trim();
+  if (/^[$#>]\s+/m.test(trimmed)) return true;
+  return /^(ollama|npm|npx|pnpm|yarn|git|docker|curl|node|python|python3|pip|pip3|brew|apt|cd|ls|cat|mkdir|touch|export|sudo|echo|chmod|systemctl)\b/m.test(trimmed);
 };
 
-// Code Block Component
-const CodeBlock: React.FC<{ 
-  language: string; 
-  value: string; 
-  onCopy: (code: string) => void; 
-  copiedCode: string | null;
-  isHtml?: boolean;
-}> = ({ language, value, onCopy, copiedCode, isHtml = false }) => {
-  const [isHovered, setIsHovered] = useState(false);
-  const [showPreview, setShowPreview] = useState(false);
-  const isCopied = copiedCode === value;
+// Normalize language for Prism syntax highlighter
+const normalizeLanguage = (lang?: string, codeText: string = ''): string => {
+  if (!lang) {
+    const trimmed = codeText.trim();
+    if (/^<\?php/i.test(trimmed)) return 'php';
+    if (/<[a-z][\s\S]*>/i.test(trimmed)) return 'markup';
+    if (/^(def\s+|import\s+[\w.]+|from\s+[\w.]+\s+import)/m.test(trimmed)) return 'python';
+    if (isShellCommand(codeText)) return 'bash';
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) return 'json';
+    return 'bash';
+  }
+
+  const l = lang.toLowerCase().trim();
+  const map: Record<string, string> = {
+    js: 'javascript',
+    javascript: 'javascript',
+    ts: 'typescript',
+    typescript: 'typescript',
+    jsx: 'jsx',
+    tsx: 'tsx',
+    py: 'python',
+    python: 'python',
+    linux: 'bash',
+    sh: 'bash',
+    bash: 'bash',
+    shell: 'bash',
+    zsh: 'bash',
+    terminal: 'bash',
+    console: 'bash',
+    cli: 'bash',
+    cmd: 'batch',
+    bat: 'batch',
+    batch: 'batch',
+    powershell: 'powershell',
+    ps: 'powershell',
+    ps1: 'powershell',
+    html: 'markup',
+    htm: 'markup',
+    markup: 'markup',
+    xml: 'markup',
+    svg: 'markup',
+    css: 'css',
+    scss: 'scss',
+    json: 'json',
+    sql: 'sql',
+    yaml: 'yaml',
+    yml: 'yaml',
+    md: 'markdown',
+    markdown: 'markdown',
+    c: 'c',
+    cpp: 'cpp',
+    'c++': 'cpp',
+    cs: 'csharp',
+    csharp: 'csharp',
+    go: 'go',
+    golang: 'go',
+    rs: 'rust',
+    rust: 'rust',
+    java: 'java',
+    php: 'php',
+    docker: 'docker',
+    dockerfile: 'docker',
+  };
+
+  return map[l] || l;
+};
+
+// Get rich display information: specific file type label, command status, and accent color
+interface LanguageInfo {
+  normalizedLang: string;
+  label: string;
+  isCommand: boolean;
+  colorClass: string;
+}
+
+const getLanguageInfo = (rawLang?: string, codeText: string = ''): LanguageInfo => {
+  const trimmed = codeText.trim();
+  const l = rawLang ? rawLang.toLowerCase().trim() : '';
+
+  // 1. Explicit raw language given
+  if (l) {
+    if (l === 'html' || l === 'htm') {
+      return { normalizedLang: 'markup', label: 'HTML', isCommand: false, colorClass: 'text-orange-400' };
+    }
+    if (l === 'php') {
+      return { normalizedLang: 'php', label: 'PHP', isCommand: false, colorClass: 'text-indigo-400' };
+    }
+    if (l === 'jsx') {
+      return { normalizedLang: 'jsx', label: 'JSX', isCommand: false, colorClass: 'text-cyan-400' };
+    }
+    if (l === 'tsx') {
+      return { normalizedLang: 'tsx', label: 'TSX', isCommand: false, colorClass: 'text-blue-400' };
+    }
+    if (l === 'ts' || l === 'typescript') {
+      return { normalizedLang: 'typescript', label: 'TSX', isCommand: false, colorClass: 'text-blue-400' };
+    }
+    if (l === 'js' || l === 'javascript') {
+      return { normalizedLang: 'javascript', label: 'JAVASCRIPT', isCommand: false, colorClass: 'text-yellow-400' };
+    }
+    if (l === 'py' || l === 'python') {
+      return { normalizedLang: 'python', label: 'PYTHON', isCommand: false, colorClass: 'text-amber-400' };
+    }
+    if (l === 'linux') {
+      return { normalizedLang: 'bash', label: 'LINUX', isCommand: true, colorClass: 'text-emerald-400' };
+    }
+    if (l === 'bash') {
+      return { normalizedLang: 'bash', label: 'BASH', isCommand: true, colorClass: 'text-emerald-400' };
+    }
+    if (l === 'sh' || l === 'shell' || l === 'zsh') {
+      return { normalizedLang: 'bash', label: 'SHELL', isCommand: true, colorClass: 'text-emerald-400' };
+    }
+    if (l === 'powershell' || l === 'ps' || l === 'ps1') {
+      return { normalizedLang: 'powershell', label: 'POWERSHELL', isCommand: true, colorClass: 'text-sky-400' };
+    }
+    if (l === 'cmd' || l === 'batch' || l === 'bat') {
+      return { normalizedLang: 'batch', label: 'BATCH', isCommand: true, colorClass: 'text-emerald-400' };
+    }
+    if (l === 'sql') {
+      return { normalizedLang: 'sql', label: 'SQL', isCommand: false, colorClass: 'text-purple-400' };
+    }
+    if (l === 'json') {
+      return { normalizedLang: 'json', label: 'JSON', isCommand: false, colorClass: 'text-teal-400' };
+    }
+    if (l === 'css') {
+      return { normalizedLang: 'css', label: 'CSS', isCommand: false, colorClass: 'text-pink-400' };
+    }
+    if (l === 'scss' || l === 'sass') {
+      return { normalizedLang: 'scss', label: 'SCSS', isCommand: false, colorClass: 'text-pink-400' };
+    }
+    if (l === 'yaml' || l === 'yml') {
+      return { normalizedLang: 'yaml', label: 'YAML', isCommand: false, colorClass: 'text-red-400' };
+    }
+    if (l === 'docker' || l === 'dockerfile') {
+      return { normalizedLang: 'docker', label: 'DOCKER', isCommand: false, colorClass: 'text-sky-400' };
+    }
+    if (l === 'c') {
+      return { normalizedLang: 'c', label: 'C', isCommand: false, colorClass: 'text-blue-300' };
+    }
+    if (l === 'cpp' || l === 'c++') {
+      return { normalizedLang: 'cpp', label: 'C++', isCommand: false, colorClass: 'text-blue-400' };
+    }
+    if (l === 'cs' || l === 'csharp') {
+      return { normalizedLang: 'csharp', label: 'C#', isCommand: false, colorClass: 'text-purple-400' };
+    }
+    if (l === 'go' || l === 'golang') {
+      return { normalizedLang: 'go', label: 'GO', isCommand: false, colorClass: 'text-cyan-400' };
+    }
+    if (l === 'rs' || l === 'rust') {
+      return { normalizedLang: 'rust', label: 'RUST', isCommand: false, colorClass: 'text-orange-500' };
+    }
+    if (l === 'java') {
+      return { normalizedLang: 'java', label: 'JAVA', isCommand: false, colorClass: 'text-red-400' };
+    }
+    if (l === 'rb' || l === 'ruby') {
+      return { normalizedLang: 'ruby', label: 'RUBY', isCommand: false, colorClass: 'text-red-500' };
+    }
+
+    const norm = normalizeLanguage(l, codeText);
+    return {
+      normalizedLang: norm,
+      label: l.toUpperCase(),
+      isCommand: norm === 'bash' || norm === 'batch' || norm === 'powershell',
+      colorClass: 'text-gray-300'
+    };
+  }
+
+  // 2. No language specified - auto-detect by content patterns
+  if (/^<\?php/i.test(trimmed)) {
+    return { normalizedLang: 'php', label: 'PHP', isCommand: false, colorClass: 'text-indigo-400' };
+  }
+  if (/<!DOCTYPE\s+html|<html[\s>]|<\w+[^>]*>[\s\S]*<\/\w+>/i.test(trimmed)) {
+    return { normalizedLang: 'markup', label: 'HTML', isCommand: false, colorClass: 'text-orange-400' };
+  }
+  if (/(import\s+React|\bexport\s+default\b|\bconst\s+[A-Z]\w+\s*=\s*\([^)]*\)\s*=>)/.test(trimmed) && /<[A-Za-z]/.test(trimmed)) {
+    return { normalizedLang: 'tsx', label: 'TSX', isCommand: false, colorClass: 'text-blue-400' };
+  }
+  if (/^(def\s+|elif\s+|import\s+[\w.]+|from\s+[\w.]+\s+import)/m.test(trimmed)) {
+    return { normalizedLang: 'python', label: 'PYTHON', isCommand: false, colorClass: 'text-amber-400' };
+  }
+  if (/^(sudo|apt|apt-get|systemctl|yum|pacman|chmod|chown|service)\b/m.test(trimmed)) {
+    return { normalizedLang: 'bash', label: 'LINUX', isCommand: true, colorClass: 'text-emerald-400' };
+  }
+  if (/^(ollama|npm|npx|pnpm|yarn|git|docker|curl|node|cd|ls|cat|mkdir|touch|export|echo)\b/m.test(trimmed) || /^[$#>]\s+/m.test(trimmed)) {
+    return { normalizedLang: 'bash', label: 'SHELL', isCommand: true, colorClass: 'text-emerald-400' };
+  }
+  if (/^(SELECT|INSERT|UPDATE|DELETE|CREATE TABLE|ALTER TABLE)\b/i.test(trimmed)) {
+    return { normalizedLang: 'sql', label: 'SQL', isCommand: false, colorClass: 'text-purple-400' };
+  }
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    return { normalizedLang: 'json', label: 'JSON', isCommand: false, colorClass: 'text-teal-400' };
+  }
+
+  return { normalizedLang: 'text', label: 'CODE', isCommand: false, colorClass: 'text-gray-300' };
+};
+
+// Inline Code & Command Component
+const InlineCode: React.FC<{
+  children: React.ReactNode;
+  isUser?: boolean;
+}> = ({ children, isUser = false }) => {
+  const [copied, setCopied] = useState(false);
+  const text = String(children).trim();
+
+  // Detect CLI command like: ollama run qwen:latest or npm run dev or $ git status
+  const isCommand = 
+    /^[$#>]\s+\w+/.test(text) ||
+    /^(ollama|npm|npx|pnpm|yarn|git|docker|curl|node|python|pip|brew|apt|cd|ls|cat|mkdir|touch|export|sudo|echo|chmod)\b/.test(text);
+
+  const handleCopy = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const cleanCmd = text.replace(/^[$#>]\s+/, '');
+    navigator.clipboard.writeText(cleanCmd);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  if (isCommand) {
+    return (
+      <span
+        onClick={handleCopy}
+        title="Click to copy command"
+        className="inline-flex items-center gap-1.5 px-2 py-0.5 my-0.5 mx-0.5 rounded-md bg-[#0f172a] text-emerald-400 font-mono text-xs border border-emerald-500/30 hover:border-emerald-500/60 shadow-xs cursor-pointer transition-all group/cmd select-all"
+      >
+        <Terminal size={11} className="text-emerald-500/70 group-hover/cmd:text-emerald-400 flex-shrink-0" />
+        <span className="font-semibold">{text}</span>
+        <button
+          type="button"
+          onClick={handleCopy}
+          className="ml-0.5 text-emerald-500/60 hover:text-emerald-300 opacity-75 group-hover/cmd:opacity-100 transition-opacity"
+          aria-label="Copy command"
+        >
+          {copied ? <Check size={11} className="text-emerald-300" /> : <Copy size={11} />}
+        </button>
+      </span>
+    );
+  }
 
   return (
-    <div 
-      className="relative group my-3 rounded-lg overflow-hidden border border-gray-200/50 shadow-sm"
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
+    <code
+      className={`
+        font-mono text-xs px-1.5 py-0.5 rounded
+        ${isUser
+          ? 'bg-white/20 text-white font-medium border border-white/20'
+          : 'bg-gray-100 text-pink-600 font-normal border border-gray-200/80'
+        }
+      `}
     >
-      <div className="flex items-center justify-between bg-[#1e1e1e] text-gray-300 px-4 py-2">
+      {children}
+    </code>
+  );
+};
+
+// Code Block Component with syntax highlighting, command styling, line numbers & copy
+const CodeBlock: React.FC<{ 
+  language?: string; 
+  value: string; 
+}> = ({ language, value }) => {
+  const [copied, setCopied] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
+
+  const { normalizedLang, label, isCommand, colorClass } = getLanguageInfo(language, value);
+  const isHtml = normalizedLang === 'markup' || /<!DOCTYPE\s+html|<html[\s>]|<\w+[^>]*>[\s\S]*<\/\w+>/i.test(value);
+
+  const handleCopy = () => {
+    // When copying commands, strip leading prompt symbols '$ ' or '> ' if present
+    const textToCopy = isCommand
+      ? value.split('\n').map(l => l.replace(/^[$#>]\s+/, '')).join('\n')
+      : value;
+    navigator.clipboard.writeText(textToCopy);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const lineCount = value.split('\n').length;
+
+  return (
+    <div className="not-prose relative my-3.5 rounded-xl overflow-hidden border border-gray-800 shadow-md bg-[#0d1117]">
+      {/* Header Bar */}
+      <div className="flex items-center justify-between bg-[#161b22] px-4 py-2 border-b border-gray-800 text-gray-300">
         <div className="flex items-center gap-2.5">
-          <Terminal size={14} className="text-gray-400" />
-          <span className="text-xs font-mono font-medium text-gray-300 uppercase tracking-wider">
-            {language || 'html'}
+          {isCommand ? (
+            <Terminal size={14} className={colorClass} />
+          ) : (
+            <Code size={14} className={colorClass} />
+          )}
+          <span className={`text-xs font-mono font-bold tracking-wider ${colorClass}`}>
+            {label}
           </span>
-          <span className="text-[10px] text-gray-500">
-            {value.split('\n').length} lines
+          <span className="text-[10px] text-gray-500 font-mono">
+            {lineCount} {lineCount === 1 ? 'line' : 'lines'}
           </span>
         </div>
-        <div className="flex items-center gap-1.5">
+
+        <div className="flex items-center gap-2">
           {isHtml && (
             <button
+              type="button"
               onClick={() => setShowPreview(!showPreview)}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-md hover:bg-gray-700 transition-colors text-gray-400 hover:text-white text-xs"
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-gray-800 hover:bg-gray-700 transition-colors text-gray-300 hover:text-white text-xs font-medium border border-gray-700"
             >
               {showPreview ? (
                 <>
-                  <EyeOff size={14} />
-                  Code
+                  <EyeOff size={13} />
+                  <span>Code</span>
                 </>
               ) : (
                 <>
-                  <Eye size={14} />
-                  Preview
+                  <Eye size={13} />
+                  <span>Preview</span>
                 </>
               )}
             </button>
           )}
-          
+
           <button
-            onClick={() => onCopy(value)}
+            type="button"
+            onClick={handleCopy}
             className={`
-              flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-all duration-200
-              ${isCopied 
-                ? 'text-green-400 bg-green-400/10' 
-                : 'text-gray-400 hover:text-white hover:bg-gray-700'
+              flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-all duration-200 text-xs font-medium border
+              ${copied 
+                ? 'text-emerald-300 bg-emerald-950/40 border-emerald-500/40' 
+                : 'text-gray-300 bg-gray-800/80 border-gray-700 hover:text-white hover:bg-gray-700'
               }
-              ${isHovered || isCopied ? 'opacity-100' : 'opacity-0'}
             `}
           >
-            {isCopied ? (
+            {copied ? (
               <>
-                <CheckCheck size={14} />
-                <span className="text-xs">Copied!</span>
+                <CheckCheck size={13} className="text-emerald-400" />
+                <span>Copied!</span>
               </>
             ) : (
               <>
-                <Copy size={14} />
-                <span className="text-xs">Copy</span>
+                <Copy size={13} />
+                <span>Copy</span>
               </>
             )}
           </button>
         </div>
       </div>
 
+      {/* Code / Preview Body */}
       {isHtml && showPreview ? (
         <div className="bg-white p-4">
           <div className="text-xs text-gray-500 mb-2 flex items-center gap-2">
             <FileText size={12} />
-            <span>HTML Preview</span>
+            <span>HTML Live Preview</span>
           </div>
           <div 
             className="prose prose-sm max-w-none p-4 bg-gray-50 rounded-lg border border-gray-200"
@@ -133,22 +389,22 @@ const CodeBlock: React.FC<{
         </div>
       ) : (
         <SyntaxHighlighter
-          language={language || 'html'}
+          language={normalizedLang}
           style={vscDarkPlus}
           customStyle={{
             margin: 0,
             padding: '16px',
             fontSize: '13px',
-            lineHeight: '1.7',
+            lineHeight: '1.65',
             background: '#0d1117',
             borderRadius: 0,
           }}
-          showLineNumbers={value.split('\n').length > 2}
+          showLineNumbers={lineCount > 1}
           wrapLines={true}
           wrapLongLines={true}
           lineNumberStyle={{
-            color: '#4a4a4a',
-            fontSize: '12px',
+            color: '#4a5568',
+            fontSize: '11px',
             minWidth: '2.5em',
             paddingRight: '1em',
             userSelect: 'none',
@@ -172,7 +428,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
 }) => {
   const [input, setInput] = useState('');
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
-  const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editingContent, setEditingContent] = useState('');
   const [showScrollButton, setShowScrollButton] = useState(false);
@@ -305,12 +560,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     setTimeout(() => setCopiedMessageId(null), 2000);
   };
 
-  const copyCodeToClipboard = (code: string) => {
-    navigator.clipboard.writeText(code);
-    setCopiedCode(code);
-    setTimeout(() => setCopiedCode(null), 2000);
-  };
-
   const handleEditMessage = (message: Message) => {
     setEditingMessageId(message.id);
     setEditingContent(message.content);
@@ -394,82 +643,47 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     return `Replying to: "${preview}"`;
   };
 
-  // Process message content to detect and highlight HTML
+  // Process message content with full syntax highlighting & command detection
   const renderMessageContent = (content: string, isUser: boolean) => {
-    const { isHtml, htmlContent } = detectHtml(content);
-    
-    if (isHtml) {
-      const beforeHtml = content.substring(0, content.indexOf(htmlContent));
-      const afterHtml = content.substring(content.indexOf(htmlContent) + htmlContent.length);
-      
-      return (
-        <>
-          {beforeHtml && (
-            <div className="prose prose-sm max-w-none prose-gray">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {beforeHtml}
-              </ReactMarkdown>
-            </div>
-          )}
-          <CodeBlock
-            language="html"
-            value={htmlContent}
-            onCopy={copyCodeToClipboard}
-            copiedCode={copiedCode}
-            isHtml={true}
-          />
-          {afterHtml && (
-            <div className="prose prose-sm max-w-none prose-gray">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {afterHtml}
-              </ReactMarkdown>
-            </div>
-          )}
-        </>
-      );
-    }
-    
     return (
       <div
         className={`
           prose prose-sm max-w-none
           ${isUser ? 'prose-invert' : 'prose-gray'}
-          prose-pre:bg-transparent prose-pre:p-0
-          prose-code:bg-gray-100 prose-code:text-gray-800 prose-code:px-1 prose-code:py-0.5 prose-code:rounded
-          prose-pre:code:bg-transparent prose-pre:code:text-inherit
+          prose-pre:bg-transparent prose-pre:p-0 prose-pre:m-0
           prose-headings:font-semibold
           prose-a:text-blue-600 prose-a:no-underline hover:prose-a:underline
           prose-table:border-collapse prose-th:border prose-th:border-gray-300 prose-th:px-4 prose-th:py-2
           prose-td:border prose-td:border-gray-300 prose-td:px-4 prose-td:py-2
-          prose-blockquote:border-l-4 prose-blockquote:border-gray-300 prose-blockquote:pl-4 prose-blockquote:text-gray-600
-          prose-code:before:content-none prose-code:after:content-none
+          prose-blockquote:border-l-4 prose-blockquote:border-[#006633]/30 prose-blockquote:pl-4 prose-blockquote:text-gray-600
         `}
       >
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
           components={{
-            code({ node, className, children, ...props }) {
+            pre({ children }) {
+              return <>{children}</>;
+            },
+            code({ className, children }) {
               const match = /language-(\w+)/.exec(className || '');
-              const language = match ? match[1] : '';
-              const inline = !className || !className.includes('language-');
-              const codeString = String(children).replace(/\n$/, '');
-              
-              if (!inline && language) {
+              const rawLanguage = match ? match[1] : undefined;
+              const rawString = String(children);
+              const isBlock = Boolean(className || rawString.includes('\n'));
+
+              if (isBlock) {
+                const codeString = rawString.replace(/\n$/, '');
                 return (
                   <CodeBlock
-                    language={language}
+                    language={rawLanguage}
                     value={codeString}
-                    onCopy={copyCodeToClipboard}
-                    copiedCode={copiedCode}
-                    isHtml={language === 'html' || language === 'htm'}
                   />
                 );
               }
-              
+
               return (
-                <code className={className} {...props}>
+                <InlineCode isUser={isUser}>
                   {children}
-                </code>
+                </InlineCode>
               );
             },
             table: ({ children }) => (
